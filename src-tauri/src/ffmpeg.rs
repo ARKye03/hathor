@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::io::{BufRead, BufReader};
+use std::io::{BufReader, Read};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -136,10 +136,34 @@ pub async fn run_ffmpeg(
     let child_arc = Arc::clone(&state.child);
     let app_clone = app.clone();
 
-    // Read stderr in background.
+    // Read stderr in background, splitting on \r and \n.
+    // FFmpeg writes progress lines with \r (not \n), so BufReader::lines() would
+    // buffer everything until EOF. We read in chunks and split manually.
     tauri::async_runtime::spawn_blocking(move || {
-        let reader = BufReader::new(stderr);
-        for line in reader.lines().flatten() {
+        let mut reader = BufReader::new(stderr);
+        let mut pending = String::new();
+        let mut buf = [0u8; 4096];
+        loop {
+            match reader.read(&mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => {
+                    pending.push_str(&String::from_utf8_lossy(&buf[..n]));
+                    while let Some(pos) = pending.find(|c| c == '\r' || c == '\n') {
+                        let line = pending[..pos].trim().to_string();
+                        pending = pending[pos + 1..].to_string();
+                        if line.is_empty() { continue; }
+                        if let Some(progress) = parse_progress(&line) {
+                            let _ = app_clone.emit("ffmpeg://progress", progress);
+                        } else {
+                            let _ = app_clone.emit("ffmpeg://log", line);
+                        }
+                    }
+                }
+            }
+        }
+        // Flush anything left without a terminator.
+        let line = pending.trim().to_string();
+        if !line.is_empty() {
             if let Some(progress) = parse_progress(&line) {
                 let _ = app_clone.emit("ffmpeg://progress", progress);
             } else {
