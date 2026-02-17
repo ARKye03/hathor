@@ -13,7 +13,7 @@ export type FfmpegOperation =
       resolution: string | null;
       fps: number | null;
     }
-  | { type: "trim"; input: string; output: string; start: string; duration: string }
+  | { type: "trim"; input: string; output: string; start: string; duration: string; trim_mode: "fast" | "accurate" }
   | { type: "compress"; input: string; output: string; crf: number }
   | { type: "remux"; input: string; output: string };
 

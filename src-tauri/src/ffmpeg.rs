@@ -47,6 +47,7 @@ pub enum FfmpegOperation {
         output: String,
         start: String,
         duration: String,
+        trim_mode: Option<String>, // "fast" | "accurate"
     },
     Compress {
         input: String,
@@ -164,17 +165,35 @@ pub fn build_args(op: &FfmpegOperation) -> Vec<String> {
             output,
             start,
             duration,
+            trim_mode,
         } => {
-            vec![
-                "-y".into(),
-                "-i".into(),
-                input.clone(),
-                "-ss".into(),
-                start.clone(),
-                "-t".into(),
-                duration.clone(),
-                output.clone(),
-            ]
+            if trim_mode.as_deref() == Some("fast") {
+                vec![
+                    "-y".into(),
+                    "-ss".into(),
+                    start.clone(),
+                    "-i".into(),
+                    input.clone(),
+                    "-t".into(),
+                    duration.clone(),
+                    "-c".into(),
+                    "copy".into(),
+                    "-avoid_negative_ts".into(),
+                    "make_zero".into(),
+                    output.clone(),
+                ]
+            } else {
+                vec![
+                    "-y".into(),
+                    "-i".into(),
+                    input.clone(),
+                    "-ss".into(),
+                    start.clone(),
+                    "-t".into(),
+                    duration.clone(),
+                    output.clone(),
+                ]
+            }
         }
         FfmpegOperation::Compress { input, output, crf } => {
             vec![

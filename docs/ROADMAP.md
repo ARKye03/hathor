@@ -11,7 +11,7 @@ This roadmap now tracks implementation status directly.
 
 - [ ] Preset-based Convert
   - [x] Output container: MP4 / MKV / MOV / WebM
-  - [ ] Output container: GIF
+  - [x] Output container: GIF
   - [x] Quality modes: target quality (CRF) + target bitrate
   - [x] Resolution: keep / 1080p / 720p / 480p
   - [x] Frame rate: keep / set
@@ -34,7 +34,7 @@ This roadmap now tracks implementation status directly.
 ## Editing Basics (v1)
 
 - [x] Trim / Cut (start + duration)
-  - [ ] Fast cut (keyframe copy) vs accurate cut (re-encode) mode switch
+  - [x] Fast cut (keyframe copy) vs accurate cut (re-encode) mode switch
 
 - [ ] Crop / Pad / Rotate
   - [ ] Crop presets + freeform
@@ -106,6 +106,6 @@ This roadmap now tracks implementation status directly.
 
 ## Next Implementation Targets
 
-1. Add GIF output path in Convert (complete MVP container matrix).
-2. Add trim mode switch: fast keyframe cut vs accurate cut.
-3. Add first smart warning: codec/container compatibility.
+1. Add first smart warning: codec/container compatibility.
+2. Add crop/pad/rotate (start with rotate + flip).
+3. Add concatenate flow for matching clips.

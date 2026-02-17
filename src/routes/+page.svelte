@@ -12,6 +12,7 @@
   type Tab = "convert" | "trim" | "compress" | "remux";
   type Container = "mp4" | "mkv" | "mov" | "webm" | "gif";
   type QualityMode = "crf" | "bitrate";
+  type TrimMode = "fast" | "accurate";
   type Resolution = "keep" | "1080p" | "720p" | "480p";
   type Fps = "keep" | "24" | "30" | "60";
 
@@ -54,6 +55,7 @@
 
   let trimInput = $state("");
   let trimOutput = $state("");
+  let trimMode = $state<TrimMode>("accurate");
   let trimStart = $state("00:00:00");
   let trimDuration = $state("00:00:30");
   let compressInput = $state("");
@@ -180,7 +182,7 @@
     } else if (activeTab === "trim") {
       const input = inputOverride ?? trimInput;
       const output = forceAutoOutput || !trimOutput ? inferOutputPath("trim", input) : trimOutput;
-      return { type: "trim", input, output, start: trimStart, duration: trimDuration };
+      return { type: "trim", input, output, start: trimStart, duration: trimDuration, trim_mode: trimMode };
     } else if (activeTab === "compress") {
       const input = inputOverride ?? compressInput;
       const output = forceAutoOutput || !compressOutput ? inferOutputPath("compress", input) : compressOutput;
@@ -609,6 +611,26 @@
               </button>
             </div>
           </label>
+          <div class="flex flex-col gap-2">
+            <span class="text-[9px] font-semibold tracking-[0.2em] uppercase text-muted-foreground">Cut Mode</span>
+            <div class="flex border border-border">
+              {#each ([["accurate", "Accurate"], ["fast", "Fast"]] as [TrimMode, string][]) as [mode, label], i}
+                <button type="button" onclick={() => trimMode = mode}
+                  class="flex-1 py-1.5 text-[9px] font-semibold tracking-[0.12em] uppercase font-mono border-0 border-r border-border cursor-pointer transition-colors"
+                  class:bg-primary={trimMode === mode}
+                  class:text-primary-foreground={trimMode === mode}
+                  class:bg-transparent={trimMode !== mode}
+                  class:text-muted-foreground={trimMode !== mode}
+                  class:border-r-0={i === 1}
+                >{label}</button>
+              {/each}
+            </div>
+            <p class="text-[9px] text-muted-foreground">
+              {trimMode === "fast"
+                ? "Keyframe cut, very fast, may be slightly less precise."
+                : "Frame-accurate cut, slower due to re-encoding."}
+            </p>
+          </div>
           <div class="grid grid-cols-2 gap-3">
             <label class="flex flex-col gap-2">
               <span class="text-[9px] font-semibold tracking-[0.2em] uppercase text-muted-foreground">Start</span>
