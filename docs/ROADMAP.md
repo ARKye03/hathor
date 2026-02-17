@@ -55,9 +55,9 @@ This roadmap now tracks implementation status directly.
 
 ## Subtitle & Track Management
 
-- [ ] Burn subtitles (SRT/ASS)
-- [ ] Add/remove tracks (mux/remux where possible)
-- [ ] Track keep/select UI (audio/subtitle stream selection)
+- [x] Burn subtitles (SRT/ASS)
+- [x] Add/remove tracks (mux/remux where possible)
+- [x] Track keep/select UI (audio/subtitle stream selection)
 
 ## Compression / Delivery Presets
 
@@ -107,6 +107,6 @@ This roadmap now tracks implementation status directly.
 
 ## Next Implementation Targets
 
-1. Add subtitle burn (SRT/ASS).
-2. Add track keep/select UI (audio/subtitle stream selection).
-3. Add add/remove tracks (mux/remux where possible).
+1. Add device presets (iPhone/iPad, Android).
+2. Add web presets (YouTube/TikTok/Instagram).
+3. Add size targeting ("fit to X MB", two-pass).

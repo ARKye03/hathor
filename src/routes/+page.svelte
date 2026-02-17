@@ -18,6 +18,8 @@
   import SlidersHorizontal from "@lucide/svelte/icons/sliders-horizontal";
   import AudioLines from "@lucide/svelte/icons/audio-lines";
   import ImageIcon from "@lucide/svelte/icons/image";
+  import Captions from "@lucide/svelte/icons/captions";
+  import ListVideo from "@lucide/svelte/icons/list-video";
   import Settings2 from "@lucide/svelte/icons/settings-2";
 
   import type { Tab, Container, QualityMode, TrimMode, Rotate, Flip, Resolution, Fps, QueueJob, QueueStatus, ModeItem } from "$lib/types";
@@ -32,6 +34,8 @@
   import LoudnessPanel from "$lib/components/panels/LoudnessPanel.svelte";
   import AudioControlsPanel from "$lib/components/panels/AudioControlsPanel.svelte";
   import ImagePanel from "$lib/components/panels/ImagePanel.svelte";
+  import BurnSubtitlesPanel from "$lib/components/panels/BurnSubtitlesPanel.svelte";
+  import TrackManagerPanel from "$lib/components/panels/TrackManagerPanel.svelte";
   import MediaInfoStrip from "$lib/components/MediaInfoStrip.svelte";
   import ProgressDisplay from "$lib/components/ProgressDisplay.svelte";
   import QueueList from "$lib/components/QueueList.svelte";
@@ -45,13 +49,15 @@
     { tab: "merge", label: "Merge", icon: Combine },
     { tab: "compress", label: "Shrink", icon: Minimize2 },
     { tab: "remux", label: "Remux", icon: Boxes },
+    { tab: "burn_subtitles", label: "Sub Burn", icon: Captions },
+    { tab: "track_manager", label: "Tracks", icon: ListVideo },
     { tab: "extract_audio", label: "Audio", icon: FileAudio2 },
     { tab: "replace_audio", label: "Replace", icon: RefreshCw },
     { tab: "loudness", label: "Loudness", icon: AudioLines },
     { tab: "audio_controls", label: "Audio FX", icon: SlidersHorizontal },
     { tab: "image", label: "Image", icon: ImageIcon },
   ];
-  const VIDEO_MODE_TABS: Tab[] = ["convert", "trim", "transform", "merge", "compress", "remux"];
+  const VIDEO_MODE_TABS: Tab[] = ["convert", "trim", "transform", "merge", "compress", "remux", "burn_subtitles", "track_manager"];
   const AUDIO_MODE_TABS: Tab[] = ["extract_audio", "replace_audio", "loudness", "audio_controls"];
   const IMAGE_MODE_TABS: Tab[] = ["image"];
   const RAIL_GROUPS: { label: string; icon: typeof FileVideo2; tabs: Tab[] }[] = [
@@ -144,6 +150,18 @@
   let imageOutput = $state("");
   let imageFormat = $state<"png" | "jpg" | "webp" | "avif" | "ico">("png");
   let imageQuality = $state(82);
+
+  let burnSubtitlesInput = $state("");
+  let burnSubtitlesFile = $state("");
+  let burnSubtitlesOutput = $state("");
+
+  let trackManagerInput = $state("");
+  let trackManagerOutput = $state("");
+  let trackManagerKeepAudio = $state<number[]>([]);
+  let trackManagerKeepSubtitles = $state<number[]>([]);
+  let trackManagerAddAudio = $state("");
+  let trackManagerAddSubtitle = $state("");
+  let trackManagerInitForInput = $state("");
 
   // ── Probe + progress ──────────────────────────────────────────────────────────
 
@@ -270,6 +288,14 @@
     if (["png", "jpg", "jpeg", "webp", "avif", "ico"].includes(cur)) {
       imageOutput = imageOutput.slice(0, dot + 1) + imageFormat;
     }
+  });
+  $effect(() => {
+    if (activeTab !== "track_manager") return;
+    if (!mediaInfo || !trackManagerInput) return;
+    if (trackManagerInitForInput === trackManagerInput) return;
+    trackManagerKeepAudio = mediaInfo.streams.filter((s) => s.codec_type === "audio").map((s) => s.index);
+    trackManagerKeepSubtitles = mediaInfo.streams.filter((s) => s.codec_type === "subtitle").map((s) => s.index);
+    trackManagerInitForInput = trackManagerInput;
   });
 
   // ── Path helpers ──────────────────────────────────────────────────────────────
@@ -436,6 +462,8 @@
       ? extractAudioFormat
       : tab === "image"
       ? imageFormat
+      : tab === "burn_subtitles" || tab === "track_manager"
+      ? (ext || "mp4")
       : tab === "replace_audio" || tab === "loudness" || tab === "audio_controls"
       ? (ext || "mp4")
       : tab === "remux"
@@ -520,6 +548,22 @@
         format: imageFormat,
         quality: Math.max(1, Math.min(100, imageQuality)),
       };
+    } else if (activeTab === "burn_subtitles") {
+      const input = inputOverride ?? burnSubtitlesInput;
+      const output = forceAutoOutput || !burnSubtitlesOutput ? inferOutputPath("burn_subtitles", input) : burnSubtitlesOutput;
+      return { type: "burn_subtitles", input, subtitle_input: burnSubtitlesFile, output };
+    } else if (activeTab === "track_manager") {
+      const input = inputOverride ?? trackManagerInput;
+      const output = forceAutoOutput || !trackManagerOutput ? inferOutputPath("track_manager", input) : trackManagerOutput;
+      return {
+        type: "manage_tracks",
+        input,
+        output,
+        keep_audio_indices: [...trackManagerKeepAudio].sort((a, b) => a - b),
+        keep_subtitle_indices: [...trackManagerKeepSubtitles].sort((a, b) => a - b),
+        add_audio_input: trackManagerAddAudio.trim() || null,
+        add_subtitle_input: trackManagerAddSubtitle.trim() || null,
+      };
     } else {
       const input = inputOverride ?? remuxInput;
       const output = forceAutoOutput || !remuxOutput ? inferOutputPath("remux", input) : remuxOutput;
@@ -536,6 +580,7 @@
   function addToQueue() {
     if (activeTab === "merge" && mergeInputs.length > 1 && mergeConcatMismatchWarning) return;
     if (activeTab === "replace_audio" && !replaceAudioTrackInput) return;
+    if (activeTab === "burn_subtitles" && !burnSubtitlesFile) return;
     const job = createQueueJob(buildOperation(), mediaInfo?.duration_secs ?? 0);
     queue.push(job);
     if (!selectedJobId) selectedJobId = job.id;
@@ -712,6 +757,13 @@
     } else if (activeTab === "image") {
       imageInput = path;
       if (!imageOutput) imageOutput = inferOutputPath("image", path);
+    } else if (activeTab === "burn_subtitles") {
+      burnSubtitlesInput = path;
+      if (!burnSubtitlesOutput) burnSubtitlesOutput = inferOutputPath("burn_subtitles", path);
+    } else if (activeTab === "track_manager") {
+      trackManagerInput = path;
+      trackManagerInitForInput = "";
+      if (!trackManagerOutput) trackManagerOutput = inferOutputPath("track_manager", path);
     } else {
       remuxInput = path;
       if (!remuxOutput) remuxOutput = inferOutputPath("remux", path);
@@ -763,6 +815,9 @@
   );
   const remuxContainerWarning = $derived(
     activeTab === "remux" ? remuxCompatibilityWarning(mediaInfo, remuxOutput) : null
+  );
+  const burnSubtitlesWarning = $derived(
+    activeTab === "burn_subtitles" && !burnSubtitlesFile ? "Select an SRT or ASS file." : null
   );
   const replaceAudioWarning = $derived(
     activeTab === "replace_audio" && !replaceAudioTrackInput ? "Select an audio track to replace with." : null
@@ -995,6 +1050,33 @@
             onpickinput={() => pickInput((v) => imageInput = v)}
             onpickoutput={() => pickOutput((v) => imageOutput = v)}
           />
+        {:else if activeTab === "burn_subtitles"}
+          <BurnSubtitlesPanel
+            bind:input={burnSubtitlesInput}
+            bind:subtitleInput={burnSubtitlesFile}
+            bind:output={burnSubtitlesOutput}
+            onpickinput={() => pickInput((v) => burnSubtitlesInput = v)}
+            onpicksubtitle={() => pickPath((v) => burnSubtitlesFile = v)}
+            onpickoutput={() => pickOutput((v) => burnSubtitlesOutput = v)}
+          />
+          {#if burnSubtitlesWarning}
+            <p class="text-[9px] text-destructive">{burnSubtitlesWarning}</p>
+          {/if}
+        {:else if activeTab === "track_manager"}
+          <TrackManagerPanel
+            bind:input={trackManagerInput}
+            bind:output={trackManagerOutput}
+            bind:addAudioInput={trackManagerAddAudio}
+            bind:addSubtitleInput={trackManagerAddSubtitle}
+            bind:keepAudioIndices={trackManagerKeepAudio}
+            bind:keepSubtitleIndices={trackManagerKeepSubtitles}
+            audioStreams={mediaInfo?.streams.filter((s) => s.codec_type === "audio") ?? []}
+            subtitleStreams={mediaInfo?.streams.filter((s) => s.codec_type === "subtitle") ?? []}
+            onpickinput={() => pickInput((v) => trackManagerInput = v)}
+            onpickoutput={() => pickOutput((v) => trackManagerOutput = v)}
+            onpickaddaudio={() => pickPath((v) => trackManagerAddAudio = v)}
+            onpickaddsubtitle={() => pickPath((v) => trackManagerAddSubtitle = v)}
+          />
         {:else}
           <RemuxPanel
             bind:input={remuxInput}
@@ -1022,7 +1104,8 @@
             onclick={addToQueue}
             disabled={
               (activeTab === "merge" && mergeInputs.length > 1 && !!mergeConcatMismatchWarning) ||
-              (activeTab === "replace_audio" && !replaceAudioTrackInput)
+              (activeTab === "replace_audio" && !replaceAudioTrackInput) ||
+              (activeTab === "burn_subtitles" && !burnSubtitlesFile)
             }
             class="primary-cta bg-foreground text-background text-[10px] tracking-[0.25em] uppercase font-semibold py-3 w-full border-0 cursor-pointer hover:opacity-90 transition-opacity flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
           >+ Add to Queue</button>

@@ -121,6 +121,19 @@ pub enum FfmpegOperation {
         format: String, // "png" | "jpg" | "webp" | "avif" | "ico"
         quality: u8,    // 1..100
     },
+    BurnSubtitles {
+        input: String,
+        subtitle_input: String,
+        output: String,
+    },
+    ManageTracks {
+        input: String,
+        output: String,
+        keep_audio_indices: Vec<u32>,
+        keep_subtitle_indices: Vec<u32>,
+        add_audio_input: Option<String>,
+        add_subtitle_input: Option<String>,
+    },
 }
 
 #[derive(Deserialize)]
@@ -152,6 +165,8 @@ impl FfmpegOperation {
             FfmpegOperation::Loudness { output, .. } => output,
             FfmpegOperation::AudioControls { output, .. } => output,
             FfmpegOperation::ImageConvert { output, .. } => output,
+            FfmpegOperation::BurnSubtitles { output, .. } => output,
+            FfmpegOperation::ManageTracks { output, .. } => output,
         }
     }
 }
@@ -171,6 +186,17 @@ fn create_concat_list(inputs: &[String]) -> Result<String, FfmpegError> {
     }
     fs::write(&path, body)?;
     Ok(path.to_string_lossy().to_string())
+}
+
+fn output_ext(output: &str) -> String {
+    output
+        .rsplit_once('.')
+        .map(|(_, ext)| ext.to_ascii_lowercase())
+        .unwrap_or_else(|| "mp4".to_string())
+}
+
+fn escape_subtitles_filter_path(path: &str) -> String {
+    path.replace('\\', "\\\\").replace(':', "\\:").replace('\'', "\\'")
 }
 
 pub fn build_args(op: &FfmpegOperation) -> Result<(Vec<String>, Vec<String>), FfmpegError> {
@@ -584,6 +610,87 @@ pub fn build_args(op: &FfmpegOperation) -> Result<(Vec<String>, Vec<String>), Ff
                     args.extend(["-c:v".into(), "png".into(), "-compression_level".into(), "6".into()]);
                 }
             }
+            args.push(output.clone());
+            Ok((args, vec![]))
+        }
+        FfmpegOperation::BurnSubtitles {
+            input,
+            subtitle_input,
+            output,
+        } => Ok((
+            vec![
+                "-y".into(),
+                "-i".into(),
+                input.clone(),
+                "-vf".into(),
+                format!("subtitles='{}'", escape_subtitles_filter_path(subtitle_input)),
+                "-c:v".into(),
+                "libx264".into(),
+                "-preset".into(),
+                "medium".into(),
+                "-crf".into(),
+                "23".into(),
+                "-c:a".into(),
+                "copy".into(),
+                output.clone(),
+            ],
+            vec![],
+        )),
+        FfmpegOperation::ManageTracks {
+            input,
+            output,
+            keep_audio_indices,
+            keep_subtitle_indices,
+            add_audio_input,
+            add_subtitle_input,
+        } => {
+            let mut args = vec!["-y".into(), "-i".into(), input.clone()];
+            let mut next_input_idx = 1_u32;
+
+            let add_audio_idx = if let Some(path) = add_audio_input.as_ref().filter(|p| !p.trim().is_empty()) {
+                args.extend(["-i".into(), path.clone()]);
+                let idx = next_input_idx;
+                next_input_idx += 1;
+                Some(idx)
+            } else {
+                None
+            };
+
+            let add_sub_idx = if let Some(path) = add_subtitle_input.as_ref().filter(|p| !p.trim().is_empty()) {
+                args.extend(["-i".into(), path.clone()]);
+                let idx = next_input_idx;
+                Some(idx)
+            } else {
+                None
+            };
+
+            args.extend(["-map".into(), "0:v?".into()]);
+            for idx in keep_audio_indices {
+                args.extend(["-map".into(), format!("0:{idx}?")]);
+            }
+            for idx in keep_subtitle_indices {
+                args.extend(["-map".into(), format!("0:{idx}?")]);
+            }
+            if let Some(idx) = add_audio_idx {
+                args.extend(["-map".into(), format!("{idx}:a:0?")]);
+            }
+            if let Some(idx) = add_sub_idx {
+                args.extend(["-map".into(), format!("{idx}:s:0?")]);
+            }
+
+            args.extend(["-c:v".into(), "copy".into()]);
+            args.extend(["-c:a".into(), "copy".into()]);
+
+            let has_subtitles = !keep_subtitle_indices.is_empty() || add_sub_idx.is_some();
+            if has_subtitles {
+                let ext = output_ext(output);
+                if ext == "mp4" || ext == "mov" || ext == "m4v" {
+                    args.extend(["-c:s".into(), "mov_text".into()]);
+                } else {
+                    args.extend(["-c:s".into(), "copy".into()]);
+                }
+            }
+
             args.push(output.clone());
             Ok((args, vec![]))
         }

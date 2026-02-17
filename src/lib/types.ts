@@ -12,7 +12,9 @@ export type Tab =
   | "replace_audio"
   | "loudness"
   | "audio_controls"
-  | "image";
+  | "image"
+  | "burn_subtitles"
+  | "track_manager";
 export type Container = "mp4" | "mkv" | "mov" | "webm" | "gif";
 export type QualityMode = "crf" | "bitrate";
 export type TrimMode = "fast" | "accurate";
