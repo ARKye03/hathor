@@ -1,7 +1,7 @@
 import type { FfmpegOperation, FfmpegProgress } from "$lib/ffmpeg";
 import type { MediaInfo } from "$lib/ffmpeg";
 
-export type Tab = "convert" | "trim" | "transform" | "merge" | "compress" | "remux";
+export type Tab = "convert" | "trim" | "transform" | "merge" | "compress" | "remux" | "extract_audio";
 export type Container = "mp4" | "mkv" | "mov" | "webm" | "gif";
 export type QualityMode = "crf" | "bitrate";
 export type TrimMode = "fast" | "accurate";

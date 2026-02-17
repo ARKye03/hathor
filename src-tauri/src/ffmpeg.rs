@@ -71,6 +71,11 @@ pub enum FfmpegOperation {
         input: String,
         output: String,
     },
+    ExtractAudio {
+        input: String,
+        output: String,
+        format: String, // "mp3" | "aac" | "opus" | "wav"
+    },
 }
 
 #[derive(Deserialize)]
@@ -97,6 +102,7 @@ impl FfmpegOperation {
             FfmpegOperation::Transform { output, .. } => output,
             FfmpegOperation::Merge { output, .. } => output,
             FfmpegOperation::Remux { output, .. } => output,
+            FfmpegOperation::ExtractAudio { output, .. } => output,
         }
     }
 }
@@ -363,6 +369,26 @@ pub fn build_args(op: &FfmpegOperation) -> Result<(Vec<String>, Vec<String>), St
             ],
             vec![],
         )),
+        FfmpegOperation::ExtractAudio {
+            input,
+            output,
+            format,
+        } => {
+            let mut args = vec!["-y".into(), "-i".into(), input.clone(), "-vn".into()];
+            match format.as_str() {
+                "aac" => args.extend(["-c:a".into(), "aac".into(), "-b:a".into(), "192k".into()]),
+                "opus" => args.extend([
+                    "-c:a".into(),
+                    "libopus".into(),
+                    "-b:a".into(),
+                    "128k".into(),
+                ]),
+                "wav" => args.extend(["-c:a".into(), "pcm_s16le".into()]),
+                _ => args.extend(["-c:a".into(), "libmp3lame".into(), "-q:a".into(), "2".into()]),
+            }
+            args.push(output.clone());
+            Ok((args, vec![]))
+        }
     }
 }
 

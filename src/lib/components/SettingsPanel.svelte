@@ -3,11 +3,13 @@
 
   interface Props {
     defaultOutputDir?: string;
+    outputNameTemplate?: string;
     cancelCleanupEnabled?: boolean;
     onpickdir: () => void;
   }
   let {
     defaultOutputDir = $bindable(""),
+    outputNameTemplate = $bindable("{name}_out"),
     cancelCleanupEnabled = $bindable(true),
     onpickdir,
   }: Props = $props();
@@ -48,6 +50,13 @@
 <label class="flex items-center gap-2 text-[9px] font-semibold tracking-[0.18em] uppercase text-muted-foreground">
   <input type="checkbox" bind:checked={cancelCleanupEnabled} class="accent-current w-3 h-3" />
   Cleanup Partial Output By Default
+</label>
+
+<label class="flex flex-col gap-2">
+  <span class="text-[9px] font-semibold tracking-[0.2em] uppercase text-muted-foreground">Output Naming Template</span>
+  <input type="text" spellcheck="false" bind:value={outputNameTemplate} placeholder="{name}_out"
+    class="bg-input border border-border text-foreground font-mono text-[11px] px-3 py-2 outline-none transition-colors placeholder:text-muted-foreground focus:border-foreground" />
+  <p class="text-[9px] text-muted-foreground">Placeholders: {"{name}"}, {"{mode}"}, {"{ext}"}, {"{ts}"}</p>
 </label>
 
 <p class="text-[9px] text-muted-foreground">These preferences apply to newly created queue jobs.</p>

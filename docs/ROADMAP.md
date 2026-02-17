@@ -48,7 +48,7 @@ This roadmap now tracks implementation status directly.
 
 ## Audio Features
 
-- [ ] Extract audio (MP3 / AAC / Opus / WAV)
+- [x] Extract audio (MP3 / AAC / Opus / WAV)
 - [ ] Replace audio track
 - [ ] Loudness normalize (EBU R128 presets)
 - [ ] Basic audio controls (volume, fade in/out)
@@ -92,11 +92,11 @@ This roadmap now tracks implementation status directly.
 
 - [ ] Output rules
   - [ ] Default output folder
-  - [ ] Naming templates
+  - [x] Naming templates
   - [ ] Overwrite/auto-increment policies
 
 - [ ] Smart warnings
-  - [ ] Remux possible suggestion
+  - [x] Remux possible suggestion
   - [x] "This cut will re-encode" warning
   - [x] Codec/container compatibility warning
 
@@ -107,6 +107,6 @@ This roadmap now tracks implementation status directly.
 
 ## Next Implementation Targets
 
-1. Add remux possible suggestion.
-2. Add output naming templates.
-3. Add extract audio (MP3 / AAC / Opus / WAV).
+1. Add replace audio track.
+2. Add loudness normalize (EBU R128 presets).
+3. Add basic audio controls (volume, fade in/out).

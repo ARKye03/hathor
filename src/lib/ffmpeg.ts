@@ -25,7 +25,8 @@ export type FfmpegOperation =
     }
   | { type: "merge"; inputs: string[]; output: string }
   | { type: "compress"; input: string; output: string; crf: number }
-  | { type: "remux"; input: string; output: string };
+  | { type: "remux"; input: string; output: string }
+  | { type: "extract_audio"; input: string; output: string; format: "mp3" | "aac" | "opus" | "wav" };
 
 export interface StreamInfo {
   index: number;

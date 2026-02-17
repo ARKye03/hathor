@@ -13,6 +13,7 @@
   import Combine from "@lucide/svelte/icons/combine";
   import Minimize2 from "@lucide/svelte/icons/minimize-2";
   import Boxes from "@lucide/svelte/icons/boxes";
+  import FileAudio2 from "@lucide/svelte/icons/file-audio-2";
   import Settings2 from "@lucide/svelte/icons/settings-2";
 
   import type { Tab, Container, QualityMode, TrimMode, Rotate, Flip, Resolution, Fps, QueueJob, QueueStatus, ModeItem } from "$lib/types";
@@ -22,6 +23,7 @@
   import MergePanel from "$lib/components/panels/MergePanel.svelte";
   import CompressPanel from "$lib/components/panels/CompressPanel.svelte";
   import RemuxPanel from "$lib/components/panels/RemuxPanel.svelte";
+  import ExtractAudioPanel from "$lib/components/panels/ExtractAudioPanel.svelte";
   import MediaInfoStrip from "$lib/components/MediaInfoStrip.svelte";
   import ProgressDisplay from "$lib/components/ProgressDisplay.svelte";
   import QueueList from "$lib/components/QueueList.svelte";
@@ -35,9 +37,11 @@
     { tab: "merge", label: "Merge", icon: Combine },
     { tab: "compress", label: "Shrink", icon: Minimize2 },
     { tab: "remux", label: "Remux", icon: Boxes },
+    { tab: "extract_audio", label: "Audio", icon: FileAudio2 },
   ];
   const DEFAULT_OUTPUT_DIR_KEY = "hathor-default-output-dir";
   const DEFAULT_CLEANUP_KEY = "hathor-cleanup-default";
+  const OUTPUT_TEMPLATE_KEY = "hathor-output-name-template";
 
   // ── Queue ─────────────────────────────────────────────────────────────────────
 
@@ -52,6 +56,7 @@
   let logCollapsed = $state(false);
   let settingsOpen = $state(false);
   let defaultOutputDir = $state("");
+  let outputNameTemplate = $state("{name}_out");
 
   // ── Form state ────────────────────────────────────────────────────────────────
 
@@ -97,6 +102,10 @@
   let remuxInput = $state("");
   let remuxOutput = $state("");
 
+  let extractAudioInput = $state("");
+  let extractAudioOutput = $state("");
+  let extractAudioFormat = $state<"mp3" | "aac" | "opus" | "wav">("mp3");
+
   // ── Probe + progress ──────────────────────────────────────────────────────────
 
   let mediaInfo = $state<MediaInfo | null>(null);
@@ -114,6 +123,7 @@
   onMount(async () => {
     try {
       defaultOutputDir = localStorage.getItem(DEFAULT_OUTPUT_DIR_KEY) ?? "";
+      outputNameTemplate = localStorage.getItem(OUTPUT_TEMPLATE_KEY) ?? "{name}_out";
       const cleanupPref = localStorage.getItem(DEFAULT_CLEANUP_KEY);
       if (cleanupPref != null) cancelCleanupEnabled = cleanupPref === "1";
     } catch {}
@@ -162,6 +172,7 @@
     try {
       localStorage.setItem(DEFAULT_OUTPUT_DIR_KEY, defaultOutputDir);
       localStorage.setItem(DEFAULT_CLEANUP_KEY, cancelCleanupEnabled ? "1" : "0");
+      localStorage.setItem(OUTPUT_TEMPLATE_KEY, outputNameTemplate);
     } catch {}
   });
 
@@ -203,6 +214,15 @@
     const cur = convertOutput.slice(dot + 1).toLowerCase();
     if ((CONTAINERS as string[]).includes(cur)) convertOutput = convertOutput.slice(0, dot + 1) + ext;
   });
+  $effect(() => {
+    if (!extractAudioOutput) return;
+    const dot = extractAudioOutput.lastIndexOf(".");
+    if (dot === -1) return;
+    const cur = extractAudioOutput.slice(dot + 1).toLowerCase();
+    if (["mp3", "aac", "opus", "wav"].includes(cur)) {
+      extractAudioOutput = extractAudioOutput.slice(0, dot + 1) + extractAudioFormat;
+    }
+  });
 
   // ── Path helpers ──────────────────────────────────────────────────────────────
 
@@ -219,6 +239,23 @@
     if (!dir) return file;
     const sep = dir.includes("\\") ? "\\" : "/";
     return dir.endsWith("/") || dir.endsWith("\\") ? `${dir}${file}` : `${dir}${sep}${file}`;
+  }
+
+  function sanitizeFilenamePart(value: string): string {
+    return value.replace(/[<>:"/\\|?*\x00-\x1F]/g, "_").trim();
+  }
+
+  function outputStem(tab: Tab, inputPath: string): string {
+    const { base, ext } = splitPath(inputPath);
+    const ts = new Date().toISOString().replace(/[-:TZ.]/g, "").slice(0, 14);
+    const template = (outputNameTemplate || "{name}_out").trim() || "{name}_out";
+    const raw = template
+      .replaceAll("{name}", base || "output")
+      .replaceAll("{mode}", tab)
+      .replaceAll("{ext}", ext || "")
+      .replaceAll("{ts}", ts);
+    const cleaned = sanitizeFilenamePart(raw);
+    return cleaned || `${base || "output"}_out`;
   }
 
   function parseOutputContainer(path: string): KnownOutputContainer | null {
@@ -257,6 +294,22 @@
     if (audio && hints.audio.length > 0 && !hints.audio.includes(audio.codec_name)) {
       return `${container.toUpperCase()} may not support ${prettyCodec(audio.codec_name)} audio in many players. Use Encode instead of Remux.`;
     }
+    return null;
+  }
+
+  function containerCompatIssue(info: MediaInfo | null, container: KnownOutputContainer): string | null {
+    if (!info) return null;
+    const video = info.streams.find((s) => s.codec_type === "video");
+    const audio = info.streams.find((s) => s.codec_type === "audio");
+    if (container === "gif") {
+      if (audio) return "audio";
+      if (video && video.codec_name !== "gif") return "video";
+      return null;
+    }
+    if (container === "mkv") return null;
+    const hints = CONTAINER_HINTS[container];
+    if (video && hints.video.length > 0 && !hints.video.includes(video.codec_name)) return "video";
+    if (audio && hints.audio.length > 0 && !hints.audio.includes(audio.codec_name)) return "audio";
     return null;
   }
 
@@ -331,18 +384,20 @@
     const outDir = defaultOutputDir || dir;
     const outExt = tab === "convert"
       ? convertContainer
+      : tab === "extract_audio"
+      ? extractAudioFormat
       : tab === "remux"
       ? (ext || "mp4")
       : "mp4";
-    return joinPath(outDir, `${base}_out.${outExt}`);
+    return joinPath(outDir, `${outputStem(tab, inputPath || base)}.${outExt}`);
   }
 
   function inferMergeOutputPath(paths: string[]): string {
     const first = paths[0] ?? "";
     if (!first) return "";
-    const { dir, ext } = splitPath(first);
+    const { dir, ext, base } = splitPath(first);
     const outDir = defaultOutputDir || dir;
-    return joinPath(outDir, `merged_out.${ext || "mp4"}`);
+    return joinPath(outDir, `${outputStem("merge", first || base)}.${ext || "mp4"}`);
   }
 
   // ── Build operation ───────────────────────────────────────────────────────────
@@ -380,6 +435,10 @@
       const input = inputOverride ?? compressInput;
       const output = forceAutoOutput || !compressOutput ? inferOutputPath("compress", input) : compressOutput;
       return { type: "compress", input, output, crf: compressCrf };
+    } else if (activeTab === "extract_audio") {
+      const input = inputOverride ?? extractAudioInput;
+      const output = forceAutoOutput || !extractAudioOutput ? inferOutputPath("extract_audio", input) : extractAudioOutput;
+      return { type: "extract_audio", input, output, format: extractAudioFormat };
     } else {
       const input = inputOverride ?? remuxInput;
       const output = forceAutoOutput || !remuxOutput ? inferOutputPath("remux", input) : remuxOutput;
@@ -477,7 +536,7 @@
     probing = false;
   }
 
-  const VIDEO_FILTERS = [{ name: "Media", extensions: ["mp4", "mkv", "avi", "mov", "webm", "m4v", "flv", "ts", "wmv", "gif"] }];
+  const VIDEO_FILTERS = [{ name: "Media", extensions: ["mp4", "mkv", "avi", "mov", "webm", "m4v", "flv", "ts", "wmv", "gif", "mp3", "aac", "opus", "wav", "m4a"] }];
 
   async function pickInput(setter: (v: string) => void) {
     const path = await open({ multiple: false, filters: VIDEO_FILTERS });
@@ -544,6 +603,9 @@
     } else if (activeTab === "compress") {
       compressInput = path;
       if (!compressOutput) compressOutput = inferOutputPath("compress", path);
+    } else if (activeTab === "extract_audio") {
+      extractAudioInput = path;
+      if (!extractAudioOutput) extractAudioOutput = inferOutputPath("extract_audio", path);
     } else {
       remuxInput = path;
       if (!remuxOutput) remuxOutput = inferOutputPath("remux", path);
@@ -581,6 +643,16 @@
   const convertCompatibilityWarning = $derived(
     mediaInfo && activeTab === "convert" && convertContainer === "gif" && mediaInfo.streams.some((s) => s.codec_type === "audio")
       ? "GIF does not support audio. Input audio tracks will be dropped."
+      : null
+  );
+  const convertRemuxSuggestion = $derived(
+    activeTab === "convert" &&
+    mediaInfo &&
+    convertContainer !== "gif" &&
+    convertResolution === "keep" &&
+    convertFps === "keep" &&
+    !containerCompatIssue(mediaInfo, convertContainer)
+      ? "Input appears container-compatible with no resize/fps changes. Use Remux for faster, no-quality-loss output."
       : null
   );
   const remuxContainerWarning = $derived(
@@ -681,6 +753,7 @@
         {#if settingsOpen}
           <SettingsPanel
             bind:defaultOutputDir
+            bind:outputNameTemplate
             bind:cancelCleanupEnabled
             onpickdir={pickDefaultOutputDir}
           />
@@ -695,6 +768,7 @@
             bind:resolution={convertResolution}
             bind:fps={convertFps}
             compatibilityWarning={convertCompatibilityWarning}
+            remuxSuggestion={convertRemuxSuggestion}
             onpickinput={() => pickInput((v) => convertInput = v)}
             onpickoutput={() => pickOutput((v) => convertOutput = v)}
           />
@@ -751,6 +825,14 @@
             bind:crf={compressCrf}
             onpickinput={() => pickInput((v) => compressInput = v)}
             onpickoutput={() => pickOutput((v) => compressOutput = v)}
+          />
+        {:else if activeTab === "extract_audio"}
+          <ExtractAudioPanel
+            bind:input={extractAudioInput}
+            bind:output={extractAudioOutput}
+            bind:format={extractAudioFormat}
+            onpickinput={() => pickInput((v) => extractAudioInput = v)}
+            onpickoutput={() => pickOutput((v) => extractAudioOutput = v)}
           />
         {:else}
           <RemuxPanel

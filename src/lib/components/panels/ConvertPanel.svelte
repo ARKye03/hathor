@@ -12,6 +12,7 @@
     resolution?: Resolution;
     fps?: Fps;
     compatibilityWarning?: string | null;
+    remuxSuggestion?: string | null;
     onpickinput: () => void;
     onpickoutput: () => void;
   }
@@ -25,6 +26,7 @@
     resolution = $bindable<Resolution>("keep"),
     fps = $bindable<Fps>("keep"),
     compatibilityWarning = null,
+    remuxSuggestion = null,
     onpickinput,
     onpickoutput,
   }: Props = $props();
@@ -119,4 +121,8 @@
 
 {#if compatibilityWarning}
   <p class="text-[9px] text-destructive">{compatibilityWarning}</p>
+{/if}
+
+{#if remuxSuggestion}
+  <p class="text-[9px] text-muted-foreground">{remuxSuggestion}</p>
 {/if}
