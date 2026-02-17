@@ -14,6 +14,15 @@ export type FfmpegOperation =
       fps: number | null;
     }
   | { type: "trim"; input: string; output: string; start: string; duration: string; trim_mode: "fast" | "accurate" }
+  | {
+      type: "transform";
+      input: string;
+      output: string;
+      crop: { x: number; y: number; width: number; height: number } | null;
+      pad: { width: number; height: number; color: string } | null;
+      rotate: 90 | 180 | 270 | null;
+      flip: "horizontal" | "vertical" | "both" | null;
+    }
   | { type: "compress"; input: string; output: string; crf: number }
   | { type: "remux"; input: string; output: string };
 

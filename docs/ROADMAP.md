@@ -36,10 +36,10 @@ This roadmap now tracks implementation status directly.
 - [x] Trim / Cut (start + duration)
   - [x] Fast cut (keyframe copy) vs accurate cut (re-encode) mode switch
 
-- [ ] Crop / Pad / Rotate
-  - [ ] Crop presets + freeform
-  - [ ] Letterbox/pillarbox padding
-  - [ ] Rotate 90/180/270, flip
+- [x] Crop / Pad / Rotate
+  - [x] Freeform crop (x/y/width/height)
+  - [x] Letterbox/pillarbox-style padding (target canvas + color)
+  - [x] Rotate 90/180/270, flip
 
 - [ ] Merge / Concatenate
   - [ ] Concat demuxer flow
@@ -107,5 +107,5 @@ This roadmap now tracks implementation status directly.
 ## Next Implementation Targets
 
 1. Add first smart warning: codec/container compatibility.
-2. Add crop/pad/rotate (start with rotate + flip).
+2. Add crop presets (16:9, 1:1, center-crop shortcuts).
 3. Add concatenate flow for matching clips.

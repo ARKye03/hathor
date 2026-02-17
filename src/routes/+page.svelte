@@ -9,10 +9,12 @@
   import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
   import { open, save } from "@tauri-apps/plugin-dialog";
 
-  type Tab = "convert" | "trim" | "compress" | "remux";
+  type Tab = "convert" | "trim" | "transform" | "compress" | "remux";
   type Container = "mp4" | "mkv" | "mov" | "webm" | "gif";
   type QualityMode = "crf" | "bitrate";
   type TrimMode = "fast" | "accurate";
+  type Rotate = "keep" | "90" | "180" | "270";
+  type Flip = "none" | "horizontal" | "vertical" | "both";
   type Resolution = "keep" | "1080p" | "720p" | "480p";
   type Fps = "keep" | "24" | "30" | "60";
 
@@ -58,6 +60,19 @@
   let trimMode = $state<TrimMode>("accurate");
   let trimStart = $state("00:00:00");
   let trimDuration = $state("00:00:30");
+  let transformInput = $state("");
+  let transformOutput = $state("");
+  let transformCropEnabled = $state(false);
+  let transformCropX = $state(0);
+  let transformCropY = $state(0);
+  let transformCropWidth = $state(640);
+  let transformCropHeight = $state(360);
+  let transformPadEnabled = $state(false);
+  let transformPadWidth = $state(1280);
+  let transformPadHeight = $state(720);
+  let transformPadColor = $state("#000000");
+  let transformRotate = $state<Rotate>("keep");
+  let transformFlip = $state<Flip>("none");
   let compressInput = $state("");
   let compressOutput = $state("");
   let compressCrf = $state(23);
@@ -158,6 +173,8 @@
     const { dir, base } = splitPath(inputPath);
     const ext = tab === "convert"
       ? convertContainer
+      : tab === "transform"
+      ? "mp4"
       : tab === "remux"
       ? "mp4"
       : "mp4";
@@ -183,6 +200,31 @@
       const input = inputOverride ?? trimInput;
       const output = forceAutoOutput || !trimOutput ? inferOutputPath("trim", input) : trimOutput;
       return { type: "trim", input, output, start: trimStart, duration: trimDuration, trim_mode: trimMode };
+    } else if (activeTab === "transform") {
+      const input = inputOverride ?? transformInput;
+      const output = forceAutoOutput || !transformOutput ? inferOutputPath("transform", input) : transformOutput;
+      return {
+        type: "transform",
+        input,
+        output,
+        crop: transformCropEnabled
+          ? {
+              x: transformCropX,
+              y: transformCropY,
+              width: transformCropWidth,
+              height: transformCropHeight,
+            }
+          : null,
+        pad: transformPadEnabled
+          ? {
+              width: transformPadWidth,
+              height: transformPadHeight,
+              color: transformPadColor,
+            }
+          : null,
+        rotate: transformRotate === "keep" ? null : parseInt(transformRotate) as 90 | 180 | 270,
+        flip: transformFlip === "none" ? null : transformFlip,
+      };
     } else if (activeTab === "compress") {
       const input = inputOverride ?? compressInput;
       const output = forceAutoOutput || !compressOutput ? inferOutputPath("compress", input) : compressOutput;
@@ -316,6 +358,9 @@
     } else if (activeTab === "trim") {
       trimInput = path;
       if (!trimOutput) trimOutput = inferOutputPath("trim", path);
+    } else if (activeTab === "transform") {
+      transformInput = path;
+      if (!transformOutput) transformOutput = inferOutputPath("transform", path);
     } else if (activeTab === "compress") {
       compressInput = path;
       if (!compressOutput) compressOutput = inferOutputPath("compress", path);
@@ -467,14 +512,14 @@
 
       <!-- Tabs -->
       <div class="flex border-b border-border flex-shrink-0">
-        {#each (["convert", "trim", "compress", "remux"] as Tab[]) as tab, i}
+        {#each (["convert", "trim", "transform", "compress", "remux"] as Tab[]) as tab, i}
           <button
             onclick={() => { activeTab = tab; mediaInfo = null; }}
             class="flex-1 py-3 text-[9px] font-semibold tracking-[0.18em] uppercase cursor-pointer bg-transparent border-0 border-r border-border transition-colors"
             class:text-foreground={activeTab === tab}
             class:tab-active={activeTab === tab}
             class:text-muted-foreground={activeTab !== tab}
-            class:border-r-0={i === 3}
+            class:border-r-0={i === 4}
           >
             {tab}
           </button>
@@ -642,6 +687,97 @@
               <input type="text" spellcheck="false" bind:value={trimDuration} placeholder="00:00:30"
                 class="bg-input border border-border text-foreground font-mono text-[11px] px-3 py-2 w-full outline-none transition-colors placeholder:text-muted-foreground focus:border-foreground" />
             </label>
+          </div>
+
+        {:else if activeTab === "transform"}
+          <label class="flex flex-col gap-2">
+            <span class="text-[9px] font-semibold tracking-[0.2em] uppercase text-muted-foreground">Input</span>
+            <div class="flex">
+              <input type="text" spellcheck="false" bind:value={transformInput} placeholder="/path/to/input.mp4"
+                class="bg-input border border-border text-foreground font-mono text-[11px] px-3 py-2 flex-1 min-w-0 outline-none transition-colors placeholder:text-muted-foreground focus:border-foreground" />
+              <button type="button" aria-label="Browse" onclick={() => pickInput((v) => transformInput = v)} class="browse-btn">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>
+              </button>
+            </div>
+          </label>
+          <label class="flex flex-col gap-2">
+            <span class="text-[9px] font-semibold tracking-[0.2em] uppercase text-muted-foreground">Output</span>
+            <div class="flex">
+              <input type="text" spellcheck="false" bind:value={transformOutput} placeholder="/path/to/output.mp4"
+                class="bg-input border border-border text-foreground font-mono text-[11px] px-3 py-2 flex-1 min-w-0 outline-none transition-colors placeholder:text-muted-foreground focus:border-foreground" />
+              <button type="button" aria-label="Browse" onclick={() => pickOutput((v) => transformOutput = v)} class="browse-btn">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>
+              </button>
+            </div>
+          </label>
+
+          <div class="flex flex-col gap-2">
+            <label class="flex items-center gap-2 text-[9px] font-semibold tracking-[0.18em] uppercase text-muted-foreground">
+              <input type="checkbox" bind:checked={transformCropEnabled} class="accent-current w-3 h-3" />
+              Crop
+            </label>
+            {#if transformCropEnabled}
+              <div class="grid grid-cols-2 gap-2">
+                <input type="number" min="0" bind:value={transformCropX} placeholder="x"
+                  class="bg-input border border-border text-foreground font-mono text-[11px] px-2 py-1.5 outline-none focus:border-foreground" />
+                <input type="number" min="0" bind:value={transformCropY} placeholder="y"
+                  class="bg-input border border-border text-foreground font-mono text-[11px] px-2 py-1.5 outline-none focus:border-foreground" />
+                <input type="number" min="1" bind:value={transformCropWidth} placeholder="width"
+                  class="bg-input border border-border text-foreground font-mono text-[11px] px-2 py-1.5 outline-none focus:border-foreground" />
+                <input type="number" min="1" bind:value={transformCropHeight} placeholder="height"
+                  class="bg-input border border-border text-foreground font-mono text-[11px] px-2 py-1.5 outline-none focus:border-foreground" />
+              </div>
+            {/if}
+          </div>
+
+          <div class="flex flex-col gap-2">
+            <label class="flex items-center gap-2 text-[9px] font-semibold tracking-[0.18em] uppercase text-muted-foreground">
+              <input type="checkbox" bind:checked={transformPadEnabled} class="accent-current w-3 h-3" />
+              Pad
+            </label>
+            {#if transformPadEnabled}
+              <div class="grid grid-cols-2 gap-2">
+                <input type="number" min="1" bind:value={transformPadWidth} placeholder="width"
+                  class="bg-input border border-border text-foreground font-mono text-[11px] px-2 py-1.5 outline-none focus:border-foreground" />
+                <input type="number" min="1" bind:value={transformPadHeight} placeholder="height"
+                  class="bg-input border border-border text-foreground font-mono text-[11px] px-2 py-1.5 outline-none focus:border-foreground" />
+              </div>
+              <input type="text" spellcheck="false" bind:value={transformPadColor} placeholder="#000000"
+                class="bg-input border border-border text-foreground font-mono text-[11px] px-2 py-1.5 outline-none focus:border-foreground" />
+              <p class="text-[9px] text-muted-foreground">Pads to target size and centers source (letterbox/pillarbox).</p>
+            {/if}
+          </div>
+
+          <div class="flex flex-col gap-2">
+            <span class="text-[9px] font-semibold tracking-[0.2em] uppercase text-muted-foreground">Rotate</span>
+            <div class="flex border border-border">
+              {#each (["keep", "90", "180", "270"] as Rotate[]) as r, i}
+                <button type="button" onclick={() => transformRotate = r}
+                  class="flex-1 py-1.5 text-[9px] font-semibold tracking-[0.1em] uppercase font-mono border-0 border-r border-border cursor-pointer transition-colors"
+                  class:bg-primary={transformRotate === r}
+                  class:text-primary-foreground={transformRotate === r}
+                  class:bg-transparent={transformRotate !== r}
+                  class:text-muted-foreground={transformRotate !== r}
+                  class:border-r-0={i === 3}
+                >{r}</button>
+              {/each}
+            </div>
+          </div>
+
+          <div class="flex flex-col gap-2">
+            <span class="text-[9px] font-semibold tracking-[0.2em] uppercase text-muted-foreground">Flip</span>
+            <div class="flex border border-border">
+              {#each (["none", "horizontal", "vertical", "both"] as Flip[]) as f, i}
+                <button type="button" onclick={() => transformFlip = f}
+                  class="flex-1 py-1.5 text-[9px] font-semibold tracking-[0.1em] uppercase font-mono border-0 border-r border-border cursor-pointer transition-colors"
+                  class:bg-primary={transformFlip === f}
+                  class:text-primary-foreground={transformFlip === f}
+                  class:bg-transparent={transformFlip !== f}
+                  class:text-muted-foreground={transformFlip !== f}
+                  class:border-r-0={i === 3}
+                >{f}</button>
+              {/each}
+            </div>
           </div>
 
         {:else if activeTab === "compress"}

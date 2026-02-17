@@ -54,10 +54,33 @@ pub enum FfmpegOperation {
         output: String,
         crf: u32,
     },
+    Transform {
+        input: String,
+        output: String,
+        crop: Option<CropSpec>,
+        pad: Option<PadSpec>,
+        rotate: Option<u16>,
+        flip: Option<String>, // "horizontal" | "vertical" | "both"
+    },
     Remux {
         input: String,
         output: String,
     },
+}
+
+#[derive(Deserialize)]
+pub struct CropSpec {
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+}
+
+#[derive(Deserialize)]
+pub struct PadSpec {
+    width: u32,
+    height: u32,
+    color: String,
 }
 
 impl FfmpegOperation {
@@ -66,6 +89,7 @@ impl FfmpegOperation {
             FfmpegOperation::Convert { output, .. } => output,
             FfmpegOperation::Trim { output, .. } => output,
             FfmpegOperation::Compress { output, .. } => output,
+            FfmpegOperation::Transform { output, .. } => output,
             FfmpegOperation::Remux { output, .. } => output,
         }
     }
@@ -206,6 +230,76 @@ pub fn build_args(op: &FfmpegOperation) -> Vec<String> {
                 crf.to_string(),
                 output.clone(),
             ]
+        }
+        FfmpegOperation::Transform {
+            input,
+            output,
+            crop,
+            pad,
+            rotate,
+            flip,
+        } => {
+            let mut args = vec!["-y".into(), "-i".into(), input.clone()];
+            let mut filters = Vec::<String>::new();
+
+            if let Some(c) = crop {
+                filters.push(format!("crop={}:{}:{}:{}", c.width, c.height, c.x, c.y));
+            }
+
+            if let Some(p) = pad {
+                let color = if p.color.trim().is_empty() {
+                    "black".to_string()
+                } else {
+                    p.color.clone()
+                };
+                filters.push(format!(
+                    "pad={}:{}:(ow-iw)/2:(oh-ih)/2:{}",
+                    p.width, p.height, color
+                ));
+            }
+
+            if let Some(r) = rotate {
+                match r {
+                    90 => filters.push("transpose=1".into()),
+                    180 => {
+                        filters.push("hflip".into());
+                        filters.push("vflip".into());
+                    }
+                    270 => filters.push("transpose=2".into()),
+                    _ => {}
+                }
+            }
+
+            if let Some(f) = flip {
+                match f.as_str() {
+                    "horizontal" => filters.push("hflip".into()),
+                    "vertical" => filters.push("vflip".into()),
+                    "both" => {
+                        filters.push("hflip".into());
+                        filters.push("vflip".into());
+                    }
+                    _ => {}
+                }
+            }
+
+            if !filters.is_empty() {
+                args.extend(["-vf".into(), filters.join(",")]);
+            }
+
+            args.extend([
+                "-c:v".into(),
+                "libx264".into(),
+                "-preset".into(),
+                "medium".into(),
+                "-crf".into(),
+                "23".into(),
+                "-pix_fmt".into(),
+                "yuv420p".into(),
+                "-c:a".into(),
+                "copy".into(),
+            ]);
+            args.push(output.clone());
+            args
         }
         FfmpegOperation::Remux { input, output } => {
             vec![
