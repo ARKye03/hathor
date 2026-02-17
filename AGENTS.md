@@ -55,7 +55,7 @@ cd src-tauri && cargo clippy
 
 ### Key Config
 
-- `tauri.conf.json`: app metadata, window size (800×600), dev URL (`localhost:1420`)
+- `tauri.conf.json`: app metadata, initial window size (800×600), minimum window size (800×670), dev URL (`localhost:1420`)
 - `svelte.config.js`: static adapter, SPA fallback
 - `vite.config.js`: Vite config for the frontend build
 
@@ -77,7 +77,7 @@ src/lib/
     BrowseInput.svelte            # input + browse button (bindable value)
     MediaInfoStrip.svelte         # probing indicator + metadata display
     ProgressDisplay.svelte        # progress bar + stats (indeterminate or pct)
-    SettingsPanel.svelte          # theme, default output dir, cleanup toggle
+    SettingsPanel.svelte          # theme, default output dir, naming template, cleanup toggle
     QueueList.svelte              # job rows + empty state
     LogView.svelte                # log header + command strip + scrolling log body
     panels/
@@ -87,7 +87,11 @@ src/lib/
       MergePanel.svelte           # includes mismatch warning logic
       CompressPanel.svelte
       RemuxPanel.svelte
-src/routes/+page.svelte           # orchestration only (~400 lines)
+      ExtractAudioPanel.svelte
+      ReplaceAudioPanel.svelte
+      LoudnessPanel.svelte
+      AudioControlsPanel.svelte
+src/routes/+page.svelte           # orchestration hub for all modes, queue, warnings, and settings
 src/app.css                       # global CSS including .browse-btn, .slider, .dot-pulse, .spinner
 ```
 
@@ -109,6 +113,16 @@ src/app.css                       # global CSS including .browse-btn, .slider, .
 - `hathor-theme` — ThemePref ("light" | "dark" | "system")
 - `hathor-default-output-dir` — default output directory path
 - `hathor-cleanup-default` — "1" or "0"
+- `hathor-output-name-template` — output filename template (`{name}`, `{mode}`, `{ext}`, `{ts}`)
+
+## Current Feature Baseline
+
+- Video workflows are implemented: encode, trim, transform, merge, compress, remux.
+- Audio workflows are implemented: extract audio, replace audio track, loudness normalize, audio controls.
+- Smart warnings are implemented: codec/container compatibility, remux suggestion, trim re-encode warning.
+- Output naming templates are implemented and persisted.
+
+Treat this as the default project baseline when planning or implementing new work. Do not propose already-shipped features as pending.
 
 ## Skills
 
