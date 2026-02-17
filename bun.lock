@@ -5,6 +5,7 @@
     "": {
       "name": "hathor",
       "dependencies": {
+        "@lucide/svelte": "^0.574.0",
         "@tauri-apps/api": "^2",
         "@tauri-apps/plugin-dialog": "~2",
         "@tauri-apps/plugin-opener": "^2",
@@ -138,6 +139,8 @@
     "@jridgewell/sourcemap-codec": ["@jridgewell/sourcemap-codec@1.5.5", "", {}, "sha512-cYQ9310grqxueWbl+WuIUIaiUaDcj7WOq5fVhEljNVgRfOUhY9fy2zTvfoqWsnebh8Sl70VScFbICvJnLKB0Og=="],
 
     "@jridgewell/trace-mapping": ["@jridgewell/trace-mapping@0.3.31", "", { "dependencies": { "@jridgewell/resolve-uri": "^3.1.0", "@jridgewell/sourcemap-codec": "^1.4.14" } }, "sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw=="],
+
+    "@lucide/svelte": ["@lucide/svelte@0.574.0", "", { "peerDependencies": { "svelte": "^5" } }, "sha512-tFkSfaKi22uDBkw72xV40oGkSXSQhURTSYn4VK3sNaPzb4dPOYw3znciVCP0VIh5BpgZXfOXRpSp3Dk8eG9EFg=="],
 
     "@next/env": ["@next/env@16.1.6", "", {}, "sha512-N1ySLuZjnAtN3kFnwhAwPvZah8RJxKasD7x1f8shFqhncnWZn4JMfg37diLNuoHsLAlrDfM3g4mawVdtAG8XLQ=="],
 

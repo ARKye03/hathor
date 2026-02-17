@@ -8,6 +8,13 @@
   import type { UnlistenFn } from "@tauri-apps/api/event";
   import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
   import { open, save } from "@tauri-apps/plugin-dialog";
+  import FileVideo2 from "@lucide/svelte/icons/file-video-2";
+  import Scissors from "@lucide/svelte/icons/scissors";
+  import Crop from "@lucide/svelte/icons/crop";
+  import Combine from "@lucide/svelte/icons/combine";
+  import Minimize2 from "@lucide/svelte/icons/minimize-2";
+  import Boxes from "@lucide/svelte/icons/boxes";
+  import Settings2 from "@lucide/svelte/icons/settings-2";
 
   type Tab = "convert" | "trim" | "transform" | "merge" | "compress" | "remux";
   type Container = "mp4" | "mkv" | "mov" | "webm" | "gif";
@@ -17,6 +24,21 @@
   type Flip = "none" | "horizontal" | "vertical" | "both";
   type Resolution = "keep" | "1080p" | "720p" | "480p";
   type Fps = "keep" | "24" | "30" | "60";
+
+  interface ModeItem {
+    tab: Tab;
+    label: string;
+    icon: typeof FileVideo2;
+  }
+
+  const MODES: ModeItem[] = [
+    { tab: "convert", label: "Encode", icon: FileVideo2 },
+    { tab: "trim", label: "Trim", icon: Scissors },
+    { tab: "transform", label: "Edit", icon: Crop },
+    { tab: "merge", label: "Merge", icon: Combine },
+    { tab: "compress", label: "Shrink", icon: Minimize2 },
+    { tab: "remux", label: "Remux", icon: Boxes },
+  ];
 
   // ── Queue ─────────────────────────────────────────────────────────────────────
 
@@ -467,6 +489,7 @@
   const isRunning = $derived(queueRunning);
   const pendingCount = $derived(queue.filter(j => j.status === "pending").length);
   const selectedJob = $derived(queue.find(j => j.id === selectedJobId) ?? null);
+  const activeMode = $derived(MODES.find((m) => m.tab === activeTab) ?? MODES[0]);
 
   type QueueStatus = "idle" | "running" | "paused" | "done" | "error";
   const queueStatus = $derived<QueueStatus>(
@@ -592,25 +615,44 @@
   </header>
 
   <!-- Workspace -->
-  <div class="grid grid-cols-[340px_1fr] flex-1 overflow-hidden">
+  <div class="grid grid-cols-[56px_340px_1fr] flex-1 overflow-hidden">
+
+    <!-- Activity Rail -->
+    <nav class="activity-rail">
+      <div class="activity-main">
+        {#each MODES as mode}
+          {@const Icon = mode.icon}
+          <button
+            type="button"
+            title={mode.label}
+            aria-label={mode.label}
+            onclick={() => { activeTab = mode.tab; mediaInfo = null; }}
+            class="activity-btn"
+            class:activity-btn-active={activeTab === mode.tab}
+          >
+            <Icon size={17} strokeWidth={1.8} />
+          </button>
+        {/each}
+      </div>
+      <div class="activity-foot">
+        <button
+          type="button"
+          title="Settings"
+          aria-label="Settings"
+          class="activity-btn"
+        >
+          <Settings2 size={17} strokeWidth={1.8} />
+        </button>
+      </div>
+    </nav>
 
     <!-- Config Panel -->
     <aside class="flex flex-col border-r border-border overflow-hidden bg-card">
 
-      <!-- Tabs -->
-      <div class="flex border-b border-border flex-shrink-0">
-        {#each (["convert", "trim", "transform", "merge", "compress", "remux"] as Tab[]) as tab, i}
-          <button
-            onclick={() => { activeTab = tab; mediaInfo = null; }}
-            class="flex-1 py-3 text-[9px] font-semibold tracking-[0.18em] uppercase cursor-pointer bg-transparent border-0 border-r border-border transition-colors"
-            class:text-foreground={activeTab === tab}
-            class:tab-active={activeTab === tab}
-            class:text-muted-foreground={activeTab !== tab}
-            class:border-r-0={i === 5}
-          >
-            {tab}
-          </button>
-        {/each}
+      <!-- Mode Header -->
+      <div class="h-12 flex items-center justify-between px-5 border-b border-border flex-shrink-0">
+        <span class="text-[9px] font-semibold tracking-[0.22em] uppercase text-muted-foreground">Mode</span>
+        <span class="text-[10px] font-semibold tracking-[0.18em] uppercase text-foreground">{activeMode.label}</span>
       </div>
 
       <!-- Fields -->
@@ -1240,6 +1282,53 @@
 </div>
 
 <style>
+  .activity-rail {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 0;
+    border-right: 1px solid var(--border);
+    background: color-mix(in oklab, var(--card) 90%, var(--background) 10%);
+  }
+
+  .activity-main,
+  .activity-foot {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: 100%;
+    align-items: center;
+  }
+
+  .activity-btn {
+    width: 40px;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid transparent;
+    border-left: 2px solid transparent;
+    border-radius: 2px;
+    color: var(--muted-foreground);
+    background: transparent;
+    cursor: pointer;
+    transition: color 120ms ease, background 120ms ease, border-color 120ms ease;
+  }
+
+  .activity-btn:hover {
+    color: var(--foreground);
+    background: var(--muted);
+    border-color: color-mix(in oklab, var(--border) 80%, transparent);
+  }
+
+  .activity-btn-active {
+    color: var(--foreground);
+    background: color-mix(in oklab, var(--muted) 70%, var(--card) 30%);
+    border-color: var(--border);
+    border-left-color: var(--foreground);
+  }
+
   /* Browse button — flush height with adjacent input */
   .browse-btn {
     display: flex;
@@ -1291,13 +1380,6 @@
 
   .log-toggle {
     border-radius: 2px;
-  }
-
-  /* Active tab: 2px bottom indicator */
-  .tab-active {
-    box-shadow:
-      inset 0 -2px 0 var(--foreground),
-      inset 0 0 0 1px color-mix(in oklab, var(--foreground) 28%, transparent);
   }
 
   /* Range slider */
