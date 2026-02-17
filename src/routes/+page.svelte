@@ -412,7 +412,7 @@
   }
 </script>
 
-<div class="relative h-screen flex flex-col overflow-hidden bg-background text-foreground font-mono">
+<div class="relative h-screen flex flex-col overflow-hidden bg-background text-foreground font-sans">
 
   <!-- Header -->
   <header class="h-12 flex items-center justify-between px-6 border-b border-border flex-shrink-0">
@@ -476,7 +476,7 @@
       </div>
 
       <!-- Fields -->
-      <div class="flex-1 px-5 py-5 flex flex-col gap-4 overflow-y-auto">
+      <div class="fields-panel flex-1 px-5 py-5 flex flex-col gap-4 overflow-y-auto">
 
         {#if activeTab === "convert"}
           <!-- Input -->
@@ -725,7 +725,7 @@
       <div class="p-4 pt-0 flex-shrink-0">
         <button
           onclick={addToQueue}
-          class="bg-primary text-primary-foreground font-mono text-[10px] tracking-[0.25em] uppercase font-semibold py-3 w-full border-0 cursor-pointer hover:opacity-90 transition-opacity flex items-center justify-center gap-2"
+          class="primary-cta bg-foreground text-background text-[10px] tracking-[0.25em] uppercase font-semibold py-3 w-full border-0 cursor-pointer hover:opacity-90 transition-opacity flex items-center justify-center gap-2"
         >
           + Add to Queue
         </button>
@@ -772,7 +772,12 @@
       <!-- Job list -->
       <div class="flex-shrink-0 overflow-y-auto border-b border-border" style="max-height: 180px;">
         {#if queue.length === 0}
-          <p class="px-5 py-5 text-[11px] text-muted-foreground text-center tracking-widest">— add jobs using the form —</p>
+          <div class="px-5 py-5">
+            <div class="queue-empty">
+              <div class="queue-empty-grid"></div>
+              <p class="text-[11px] text-muted-foreground text-center tracking-widest">— add jobs using the form —</p>
+            </div>
+          </div>
         {:else}
           {#each queue as job}
             <div
@@ -887,7 +892,7 @@
           <button
             type="button"
             onclick={toggleLogs}
-            class="text-[8px] font-semibold tracking-[0.15em] uppercase text-muted-foreground hover:text-foreground transition-colors cursor-pointer border border-border bg-transparent px-2 py-1"
+            class="log-toggle text-[8px] font-semibold tracking-[0.15em] uppercase text-muted-foreground hover:text-foreground transition-colors cursor-pointer border border-border bg-transparent px-2 py-1"
           >
             {logCollapsed ? "Expand Logs" : "Collapse Logs"}
           </button>
@@ -896,7 +901,7 @@
 
       {#if !logCollapsed && selectedJob?.command}
         <div class="px-5 py-2 border-b border-border flex items-center gap-3">
-          <code class="flex-1 text-[9px] text-muted-foreground truncate">{selectedJob.command}</code>
+          <code class="flex-1 text-[9px] text-muted-foreground truncate font-mono">{selectedJob.command}</code>
           <button
             type="button"
             onclick={() => copyCommand(selectedJob.command)}
@@ -923,7 +928,7 @@
           <p class="px-5 py-8 text-[11px] text-muted-foreground text-center tracking-widest">— awaiting process —</p>
         {:else}
           {#each selectedJob.logs as line, i}
-            <div class="flex gap-4 px-5 py-px text-[11px] leading-relaxed hover:bg-muted">
+            <div class="flex gap-4 px-5 py-px text-[11px] leading-relaxed font-mono hover:bg-muted/70">
               <span class="text-muted-foreground select-none shrink-0 w-9 text-right opacity-40 tabular-nums">{String(i + 1).padStart(4, "0")}</span>
               <span class="text-foreground break-all whitespace-pre-wrap">{line}</span>
             </div>
@@ -956,12 +961,52 @@
     cursor: pointer;
     transition: background 0.12s;
     flex-shrink: 0;
+    border-radius: 2px;
   }
   .browse-btn:hover { background: var(--muted); }
 
+  .fields-panel > * + * {
+    border-top: 1px solid color-mix(in oklab, var(--border) 70%, transparent);
+    padding-top: 12px;
+  }
+
+  .primary-cta {
+    border-radius: 2px;
+    letter-spacing: 0.26em;
+    box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--background) 45%, transparent);
+  }
+
+  .queue-empty {
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    min-height: 72px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    overflow: hidden;
+    background: color-mix(in oklab, var(--card) 84%, var(--background) 16%);
+  }
+
+  .queue-empty-grid {
+    position: absolute;
+    inset: 0;
+    opacity: 0.25;
+    background-image:
+      linear-gradient(to right, color-mix(in oklab, var(--border) 60%, transparent) 1px, transparent 1px),
+      linear-gradient(to bottom, color-mix(in oklab, var(--border) 60%, transparent) 1px, transparent 1px);
+    background-size: 18px 18px;
+  }
+
+  .log-toggle {
+    border-radius: 2px;
+  }
+
   /* Active tab: 2px bottom indicator */
   .tab-active {
-    box-shadow: inset 0 -2px 0 var(--foreground);
+    box-shadow:
+      inset 0 -2px 0 var(--foreground),
+      inset 0 0 0 1px color-mix(in oklab, var(--foreground) 28%, transparent);
   }
 
   /* Range slider */
@@ -1021,6 +1066,7 @@
     flex-direction: column;
     min-height: 0;
     flex: 1;
+    background: color-mix(in oklab, var(--background) 88%, var(--card) 12%);
     transition: flex 180ms ease, max-height 180ms ease;
   }
 
