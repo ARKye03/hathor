@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy, tick } from "svelte";
   import { runFfmpeg, onLog, onDone, type FfmpegOperation } from "$lib/ffmpeg";
+  import { theme, type ThemePref } from "$lib/theme.svelte";
   import type { UnlistenFn } from "@tauri-apps/api/event";
 
   type Tab = "convert" | "trim" | "compress";
@@ -77,6 +78,22 @@
   <header class="h-12 flex items-center justify-between px-6 border-b border-border flex-shrink-0">
     <span class="text-[11px] font-bold tracking-[0.35em] uppercase select-none">HATHOR</span>
 
+    <div class="flex items-center gap-4">
+      <!-- Theme switcher -->
+      <div class="flex border border-border text-[9px] font-semibold tracking-[0.15em] uppercase">
+        {#each (["light", "dark", "system"] as ThemePref[]) as opt, i}
+          <button
+            onclick={() => theme.pref = opt}
+            class="px-2.5 py-1 font-mono border-0 border-r border-border cursor-pointer transition-colors"
+            class:bg-primary={theme.pref === opt}
+            class:text-primary-foreground={theme.pref === opt}
+            class:bg-transparent={theme.pref !== opt}
+            class:text-muted-foreground={theme.pref !== opt}
+            class:border-r-0={i === 2}
+          >{opt}</button>
+        {/each}
+      </div>
+
     <div
       class="flex items-center gap-2 px-3 py-1 border text-[9px] font-semibold tracking-[0.2em] uppercase transition-colors"
       class:text-muted-foreground={status === "idle"}
@@ -91,6 +108,7 @@
         class:dot-pulse={status === "running"}
       ></span>
       {status}
+    </div>
     </div>
   </header>
 
