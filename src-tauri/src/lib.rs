@@ -1,10 +1,5 @@
 mod ffmpeg;
 
-#[tauri::command]
-fn greet(name: &str) -> String {
-    format!("Hello, {}! You've been greeted from Rust!", name)
-}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -12,7 +7,6 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(ffmpeg::FfmpegState::new())
         .invoke_handler(tauri::generate_handler![
-            greet,
             ffmpeg::run_ffmpeg,
             ffmpeg::cancel_ffmpeg,
             ffmpeg::probe_media,

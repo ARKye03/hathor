@@ -21,6 +21,12 @@ impl FfmpegState {
     }
 }
 
+impl Default for FfmpegState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 struct RunningProcess {
     child: Child,
     output_path: String,
@@ -644,7 +650,7 @@ pub async fn run_ffmpeg(
 
     // Kill any previous job, store this child.
     {
-        let mut guard = state.running.lock().unwrap();
+        let mut guard = state.running.lock().unwrap_or_else(|p| p.into_inner());
         if let Some(ref mut prev) = *guard {
             let _ = prev.child.kill();
             cleanup_temp_files(&prev.temp_files);
@@ -672,7 +678,7 @@ pub async fn run_ffmpeg(
                 Ok(0) | Err(_) => break,
                 Ok(n) => {
                     pending.push_str(&String::from_utf8_lossy(&buf[..n]));
-                    while let Some(pos) = pending.find(|c| c == '\r' || c == '\n') {
+                    while let Some(pos) = pending.find(['\r', '\n']) {
                         let line = pending[..pos].trim().to_string();
                         pending = pending[pos + 1..].to_string();
                         if line.is_empty() {
@@ -700,12 +706,15 @@ pub async fn run_ffmpeg(
 
     // Poll try_wait so cancel_ffmpeg can call kill() without deadlocking.
     let exit_code = tauri::async_runtime::spawn_blocking(move || loop {
-        let mut guard = child_arc.lock().unwrap();
+        let mut guard = child_arc.lock().unwrap_or_else(|p| p.into_inner());
         match *guard {
             None => return -1, // cancelled — child was taken
             Some(ref mut p) => match p.child.try_wait() {
                 Ok(Some(status)) => {
                     let code = status.code().unwrap_or(-1);
+                    if code != 0 && p.cleanup_partial {
+                        cleanup_partial_output(&p.output_path);
+                    }
                     cleanup_temp_files(&p.temp_files);
                     *guard = None;
                     return code;
@@ -731,7 +740,7 @@ pub async fn run_ffmpeg(
 
 #[tauri::command]
 pub async fn cancel_ffmpeg(state: tauri::State<'_, FfmpegState>) -> Result<(), String> {
-    let mut guard = state.running.lock().unwrap();
+    let mut guard = state.running.lock().unwrap_or_else(|p| p.into_inner());
     if let Some(ref mut process) = *guard {
         process.child.kill().map_err(|e| e.to_string())?;
         if process.cleanup_partial {
@@ -869,7 +878,7 @@ const MEDIA_EXTENSIONS: [&str; 17] = [
 fn is_media_file(path: &Path) -> bool {
     path.extension()
         .and_then(|ext| ext.to_str())
-        .map(|ext| MEDIA_EXTENSIONS.contains(&ext.to_ascii_lowercase().as_str()))
+        .map(|ext| MEDIA_EXTENSIONS.iter().any(|&e| ext.eq_ignore_ascii_case(e)))
         .unwrap_or(false)
 }
 
