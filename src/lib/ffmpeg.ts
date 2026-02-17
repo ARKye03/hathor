@@ -55,3 +55,7 @@ export function onProgress(cb: (p: FfmpegProgress) => void): Promise<UnlistenFn>
 export function onDone(cb: (exitCode: number) => void): Promise<UnlistenFn> {
   return listen<number>("ffmpeg://done", (e) => cb(e.payload));
 }
+
+export function cancelFfmpeg(): Promise<void> {
+  return invoke("cancel_ffmpeg");
+}

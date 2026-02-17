@@ -1,7 +1,21 @@
 use serde::{Deserialize, Serialize};
 use std::io::{BufRead, BufReader};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tauri::{AppHandle, Emitter};
+
+// ── Managed state ─────────────────────────────────────────────────────────────
+
+pub struct FfmpegState {
+    child: Arc<Mutex<Option<Child>>>,
+}
+
+impl FfmpegState {
+    pub fn new() -> Self {
+        Self { child: Arc::new(Mutex::new(None)) }
+    }
+}
 
 // ── Operations ────────────────────────────────────────────────────────────────
 
@@ -94,7 +108,11 @@ fn parse_progress(line: &str) -> Option<FfmpegProgress> {
 // ── run_ffmpeg ────────────────────────────────────────────────────────────────
 
 #[tauri::command]
-pub async fn run_ffmpeg(app: AppHandle, operation: FfmpegOperation) -> Result<(), String> {
+pub async fn run_ffmpeg(
+    app: AppHandle,
+    state: tauri::State<'_, FfmpegState>,
+    operation: FfmpegOperation,
+) -> Result<(), String> {
     let args = build_args(&operation);
 
     let mut child = Command::new("ffmpeg")
@@ -105,8 +123,20 @@ pub async fn run_ffmpeg(app: AppHandle, operation: FfmpegOperation) -> Result<()
         .map_err(|e| e.to_string())?;
 
     let stderr = child.stderr.take().unwrap();
+
+    // Kill any previous job, store this child.
+    {
+        let mut guard = state.child.lock().unwrap();
+        if let Some(ref mut prev) = *guard {
+            let _ = prev.kill();
+        }
+        *guard = Some(child);
+    }
+
+    let child_arc = Arc::clone(&state.child);
     let app_clone = app.clone();
 
+    // Read stderr in background.
     tauri::async_runtime::spawn_blocking(move || {
         let reader = BufReader::new(stderr);
         for line in reader.lines().flatten() {
@@ -118,12 +148,42 @@ pub async fn run_ffmpeg(app: AppHandle, operation: FfmpegOperation) -> Result<()
         }
     });
 
-    let status =
-        tauri::async_runtime::spawn_blocking(move || child.wait().map_err(|e| e.to_string()))
-            .await
-            .map_err(|e| e.to_string())??;
+    // Poll try_wait so cancel_ffmpeg can call kill() without deadlocking.
+    let exit_code = tauri::async_runtime::spawn_blocking(move || loop {
+        let mut guard = child_arc.lock().unwrap();
+        match *guard {
+            None => return -1, // cancelled — child was taken
+            Some(ref mut c) => match c.try_wait() {
+                Ok(Some(status)) => {
+                    let code = status.code().unwrap_or(-1);
+                    *guard = None;
+                    return code;
+                }
+                Ok(None) => {
+                    drop(guard);
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+                Err(_) => {
+                    *guard = None;
+                    return -1;
+                }
+            },
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?;
 
-    let _ = app.emit("ffmpeg://done", status.code().unwrap_or(-1));
+    let _ = app.emit("ffmpeg://done", exit_code);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn cancel_ffmpeg(state: tauri::State<'_, FfmpegState>) -> Result<(), String> {
+    let mut guard = state.child.lock().unwrap();
+    if let Some(ref mut child) = *guard {
+        child.kill().map_err(|e| e.to_string())?;
+        // Leave child in state; the wait loop will reap it via try_wait.
+    }
     Ok(())
 }
 

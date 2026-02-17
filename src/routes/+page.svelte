@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy, tick } from "svelte";
   import {
-    runFfmpeg, onLog, onDone, onProgress, probeMedia,
+    runFfmpeg, cancelFfmpeg, onLog, onDone, onProgress, probeMedia,
     type FfmpegOperation, type MediaInfo, type FfmpegProgress
   } from "$lib/ffmpeg";
   import { theme, type ThemePref } from "$lib/theme.svelte";
@@ -9,7 +9,7 @@
   import { open, save } from "@tauri-apps/plugin-dialog";
 
   type Tab = "convert" | "trim" | "compress";
-  type Status = "idle" | "running" | "done" | "error";
+  type Status = "idle" | "running" | "done" | "error" | "cancelled";
 
   let activeTab = $state<Tab>("convert");
   let status = $state<Status>("idle");
@@ -43,7 +43,7 @@
       if (logPanel) logPanel.scrollTop = logPanel.scrollHeight;
     });
     unlistenDone = await onDone((code) => {
-      status = code === 0 ? "done" : "error";
+      if (status === "running") status = code === 0 ? "done" : "error";
     });
     unlistenProgress = await onProgress((p) => {
       currentProgress = p;
@@ -77,6 +77,11 @@
       logs = [...logs, `[error] ${e}`];
       status = "error";
     }
+  }
+
+  async function handleCancel() {
+    status = "cancelled";
+    try { await cancelFfmpeg(); } catch {}
   }
 
   async function probeFile(path: string) {
@@ -179,8 +184,8 @@
         class:border-border={status === "idle"}
         class:text-foreground={status === "running" || status === "done"}
         class:border-foreground={status === "running" || status === "done"}
-        class:text-destructive={status === "error"}
-        class:border-destructive={status === "error"}
+        class:text-destructive={status === "error" || status === "cancelled"}
+        class:border-destructive={status === "error" || status === "cancelled"}
       >
         <span
           class="inline-block w-[5px] h-[5px] bg-current flex-shrink-0"
@@ -346,12 +351,12 @@
 
       </div>
 
-      <!-- Run Button -->
-      <div class="p-4 pt-0 flex-shrink-0">
+      <!-- Run / Cancel -->
+      <div class="p-4 pt-0 flex-shrink-0 flex gap-2">
         <button
           onclick={handleRun}
           disabled={isRunning}
-          class="bg-primary text-primary-foreground font-mono text-[10px] tracking-[0.25em] uppercase font-semibold py-3 w-full border-0 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90 transition-opacity flex items-center justify-center gap-2"
+          class="bg-primary text-primary-foreground font-mono text-[10px] tracking-[0.25em] uppercase font-semibold py-3 flex-1 border-0 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90 transition-opacity flex items-center justify-center gap-2"
         >
           {#if isRunning}
             <span class="spinner"></span>Processing
@@ -359,6 +364,15 @@
             <span class="text-[9px]">▶</span>Run
           {/if}
         </button>
+        {#if isRunning}
+          <button
+            onclick={handleCancel}
+            aria-label="Cancel"
+            class="border border-destructive text-destructive font-mono text-[10px] tracking-[0.2em] uppercase font-semibold py-3 px-4 cursor-pointer hover:bg-destructive hover:text-primary-foreground transition-colors flex-shrink-0"
+          >
+            ✕
+          </button>
+        {/if}
       </div>
     </aside>
 
