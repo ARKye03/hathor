@@ -24,6 +24,9 @@
   import CompressPanel from "$lib/components/panels/CompressPanel.svelte";
   import RemuxPanel from "$lib/components/panels/RemuxPanel.svelte";
   import ExtractAudioPanel from "$lib/components/panels/ExtractAudioPanel.svelte";
+  import ReplaceAudioPanel from "$lib/components/panels/ReplaceAudioPanel.svelte";
+  import LoudnessPanel from "$lib/components/panels/LoudnessPanel.svelte";
+  import AudioControlsPanel from "$lib/components/panels/AudioControlsPanel.svelte";
   import MediaInfoStrip from "$lib/components/MediaInfoStrip.svelte";
   import ProgressDisplay from "$lib/components/ProgressDisplay.svelte";
   import QueueList from "$lib/components/QueueList.svelte";
@@ -38,6 +41,9 @@
     { tab: "compress", label: "Shrink", icon: Minimize2 },
     { tab: "remux", label: "Remux", icon: Boxes },
     { tab: "extract_audio", label: "Audio", icon: FileAudio2 },
+    { tab: "replace_audio", label: "Replace", icon: FileAudio2 },
+    { tab: "loudness", label: "Loudness", icon: FileAudio2 },
+    { tab: "audio_controls", label: "Audio FX", icon: FileAudio2 },
   ];
   const DEFAULT_OUTPUT_DIR_KEY = "hathor-default-output-dir";
   const DEFAULT_CLEANUP_KEY = "hathor-cleanup-default";
@@ -105,6 +111,20 @@
   let extractAudioInput = $state("");
   let extractAudioOutput = $state("");
   let extractAudioFormat = $state<"mp3" | "aac" | "opus" | "wav">("mp3");
+
+  let replaceAudioInput = $state("");
+  let replaceAudioTrackInput = $state("");
+  let replaceAudioOutput = $state("");
+
+  let loudnessInput = $state("");
+  let loudnessOutput = $state("");
+  let loudnessPreset = $state<"broadcast" | "streaming" | "podcast">("broadcast");
+
+  let audioControlsInput = $state("");
+  let audioControlsOutput = $state("");
+  let audioControlsVolume = $state(1);
+  let audioControlsFadeIn = $state(0);
+  let audioControlsFadeOut = $state(0);
 
   // ── Probe + progress ──────────────────────────────────────────────────────────
 
@@ -386,6 +406,8 @@
       ? convertContainer
       : tab === "extract_audio"
       ? extractAudioFormat
+      : tab === "replace_audio" || tab === "loudness" || tab === "audio_controls"
+      ? (ext || "mp4")
       : tab === "remux"
       ? (ext || "mp4")
       : "mp4";
@@ -439,6 +461,25 @@
       const input = inputOverride ?? extractAudioInput;
       const output = forceAutoOutput || !extractAudioOutput ? inferOutputPath("extract_audio", input) : extractAudioOutput;
       return { type: "extract_audio", input, output, format: extractAudioFormat };
+    } else if (activeTab === "replace_audio") {
+      const input = inputOverride ?? replaceAudioInput;
+      const output = forceAutoOutput || !replaceAudioOutput ? inferOutputPath("replace_audio", input) : replaceAudioOutput;
+      return { type: "replace_audio", input, audio_input: replaceAudioTrackInput, output };
+    } else if (activeTab === "loudness") {
+      const input = inputOverride ?? loudnessInput;
+      const output = forceAutoOutput || !loudnessOutput ? inferOutputPath("loudness", input) : loudnessOutput;
+      return { type: "loudness", input, output, preset: loudnessPreset };
+    } else if (activeTab === "audio_controls") {
+      const input = inputOverride ?? audioControlsInput;
+      const output = forceAutoOutput || !audioControlsOutput ? inferOutputPath("audio_controls", input) : audioControlsOutput;
+      return {
+        type: "audio_controls",
+        input,
+        output,
+        volume: Math.max(0, audioControlsVolume),
+        fade_in_secs: Math.max(0, audioControlsFadeIn),
+        fade_out_secs: Math.max(0, audioControlsFadeOut),
+      };
     } else {
       const input = inputOverride ?? remuxInput;
       const output = forceAutoOutput || !remuxOutput ? inferOutputPath("remux", input) : remuxOutput;
@@ -454,6 +495,7 @@
 
   function addToQueue() {
     if (activeTab === "merge" && mergeInputs.length > 1 && mergeConcatMismatchWarning) return;
+    if (activeTab === "replace_audio" && !replaceAudioTrackInput) return;
     const job = createQueueJob(buildOperation(), mediaInfo?.duration_secs ?? 0);
     queue.push(job);
     if (!selectedJobId) selectedJobId = job.id;
@@ -543,6 +585,11 @@
     if (typeof path === "string") { setter(path); probeFile(path); }
   }
 
+  async function pickPath(setter: (v: string) => void) {
+    const path = await open({ multiple: false, filters: VIDEO_FILTERS });
+    if (typeof path === "string") setter(path);
+  }
+
   async function pickOutput(setter: (v: string) => void) {
     const path = await save({ filters: VIDEO_FILTERS });
     if (path) setter(path);
@@ -606,6 +653,15 @@
     } else if (activeTab === "extract_audio") {
       extractAudioInput = path;
       if (!extractAudioOutput) extractAudioOutput = inferOutputPath("extract_audio", path);
+    } else if (activeTab === "replace_audio") {
+      replaceAudioInput = path;
+      if (!replaceAudioOutput) replaceAudioOutput = inferOutputPath("replace_audio", path);
+    } else if (activeTab === "loudness") {
+      loudnessInput = path;
+      if (!loudnessOutput) loudnessOutput = inferOutputPath("loudness", path);
+    } else if (activeTab === "audio_controls") {
+      audioControlsInput = path;
+      if (!audioControlsOutput) audioControlsOutput = inferOutputPath("audio_controls", path);
     } else {
       remuxInput = path;
       if (!remuxOutput) remuxOutput = inferOutputPath("remux", path);
@@ -657,6 +713,9 @@
   );
   const remuxContainerWarning = $derived(
     activeTab === "remux" ? remuxCompatibilityWarning(mediaInfo, remuxOutput) : null
+  );
+  const replaceAudioWarning = $derived(
+    activeTab === "replace_audio" && !replaceAudioTrackInput ? "Select an audio track to replace with." : null
   );
   const mergeConcatMismatchWarning = $derived(
     activeTab === "merge" ? mergeMismatchWarning(mergeInfos, mergeInputs) : null
@@ -834,6 +893,34 @@
             onpickinput={() => pickInput((v) => extractAudioInput = v)}
             onpickoutput={() => pickOutput((v) => extractAudioOutput = v)}
           />
+        {:else if activeTab === "replace_audio"}
+          <ReplaceAudioPanel
+            bind:input={replaceAudioInput}
+            bind:audioInput={replaceAudioTrackInput}
+            bind:output={replaceAudioOutput}
+            warning={replaceAudioWarning}
+            onpickinput={() => pickInput((v) => replaceAudioInput = v)}
+            onpickaudio={() => pickPath((v) => replaceAudioTrackInput = v)}
+            onpickoutput={() => pickOutput((v) => replaceAudioOutput = v)}
+          />
+        {:else if activeTab === "loudness"}
+          <LoudnessPanel
+            bind:input={loudnessInput}
+            bind:output={loudnessOutput}
+            bind:preset={loudnessPreset}
+            onpickinput={() => pickInput((v) => loudnessInput = v)}
+            onpickoutput={() => pickOutput((v) => loudnessOutput = v)}
+          />
+        {:else if activeTab === "audio_controls"}
+          <AudioControlsPanel
+            bind:input={audioControlsInput}
+            bind:output={audioControlsOutput}
+            bind:volume={audioControlsVolume}
+            bind:fadeInSecs={audioControlsFadeIn}
+            bind:fadeOutSecs={audioControlsFadeOut}
+            onpickinput={() => pickInput((v) => audioControlsInput = v)}
+            onpickoutput={() => pickOutput((v) => audioControlsOutput = v)}
+          />
         {:else}
           <RemuxPanel
             bind:input={remuxInput}
@@ -859,7 +946,10 @@
         {:else}
           <button
             onclick={addToQueue}
-            disabled={activeTab === "merge" && mergeInputs.length > 1 && !!mergeConcatMismatchWarning}
+            disabled={
+              (activeTab === "merge" && mergeInputs.length > 1 && !!mergeConcatMismatchWarning) ||
+              (activeTab === "replace_audio" && !replaceAudioTrackInput)
+            }
             class="primary-cta bg-foreground text-background text-[10px] tracking-[0.25em] uppercase font-semibold py-3 w-full border-0 cursor-pointer hover:opacity-90 transition-opacity flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
           >+ Add to Queue</button>
         {/if}

@@ -49,9 +49,9 @@ This roadmap now tracks implementation status directly.
 ## Audio Features
 
 - [x] Extract audio (MP3 / AAC / Opus / WAV)
-- [ ] Replace audio track
-- [ ] Loudness normalize (EBU R128 presets)
-- [ ] Basic audio controls (volume, fade in/out)
+- [x] Replace audio track
+- [x] Loudness normalize (EBU R128 presets)
+- [x] Basic audio controls (volume, fade in/out)
 
 ## Subtitle & Track Management
 
@@ -107,6 +107,6 @@ This roadmap now tracks implementation status directly.
 
 ## Next Implementation Targets
 
-1. Add replace audio track.
-2. Add loudness normalize (EBU R128 presets).
-3. Add basic audio controls (volume, fade in/out).
+1. Add subtitle burn (SRT/ASS).
+2. Add track keep/select UI (audio/subtitle stream selection).
+3. Add add/remove tracks (mux/remux where possible).

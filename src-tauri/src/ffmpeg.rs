@@ -76,6 +76,23 @@ pub enum FfmpegOperation {
         output: String,
         format: String, // "mp3" | "aac" | "opus" | "wav"
     },
+    ReplaceAudio {
+        input: String,
+        audio_input: String,
+        output: String,
+    },
+    Loudness {
+        input: String,
+        output: String,
+        preset: String, // "broadcast" | "streaming" | "podcast"
+    },
+    AudioControls {
+        input: String,
+        output: String,
+        volume: f32,
+        fade_in_secs: f32,
+        fade_out_secs: f32,
+    },
 }
 
 #[derive(Deserialize)]
@@ -103,6 +120,9 @@ impl FfmpegOperation {
             FfmpegOperation::Merge { output, .. } => output,
             FfmpegOperation::Remux { output, .. } => output,
             FfmpegOperation::ExtractAudio { output, .. } => output,
+            FfmpegOperation::ReplaceAudio { output, .. } => output,
+            FfmpegOperation::Loudness { output, .. } => output,
+            FfmpegOperation::AudioControls { output, .. } => output,
         }
     }
 }
@@ -388,6 +408,114 @@ pub fn build_args(op: &FfmpegOperation) -> Result<(Vec<String>, Vec<String>), St
             }
             args.push(output.clone());
             Ok((args, vec![]))
+        }
+        FfmpegOperation::ReplaceAudio {
+            input,
+            audio_input,
+            output,
+        } => Ok((
+            vec![
+                "-y".into(),
+                "-i".into(),
+                input.clone(),
+                "-i".into(),
+                audio_input.clone(),
+                "-map".into(),
+                "0:v?".into(),
+                "-map".into(),
+                "1:a:0".into(),
+                "-map".into(),
+                "0:s?".into(),
+                "-c:v".into(),
+                "copy".into(),
+                "-c:s".into(),
+                "copy".into(),
+                "-c:a".into(),
+                "aac".into(),
+                "-shortest".into(),
+                output.clone(),
+            ],
+            vec![],
+        )),
+        FfmpegOperation::Loudness {
+            input,
+            output,
+            preset,
+        } => {
+            let (i, lra, tp) = match preset.as_str() {
+                "streaming" => ("-16", "7", "-1.5"),
+                "podcast" => ("-19", "8", "-2.0"),
+                _ => ("-23", "7", "-2.0"),
+            };
+            Ok((
+                vec![
+                    "-y".into(),
+                    "-i".into(),
+                    input.clone(),
+                    "-map".into(),
+                    "0:v?".into(),
+                    "-map".into(),
+                    "0:a:0".into(),
+                    "-map".into(),
+                    "0:s?".into(),
+                    "-c:v".into(),
+                    "copy".into(),
+                    "-c:s".into(),
+                    "copy".into(),
+                    "-af".into(),
+                    format!("loudnorm=I={i}:LRA={lra}:TP={tp}"),
+                    "-c:a".into(),
+                    "aac".into(),
+                    output.clone(),
+                ],
+                vec![],
+            ))
+        }
+        FfmpegOperation::AudioControls {
+            input,
+            output,
+            volume,
+            fade_in_secs,
+            fade_out_secs,
+        } => {
+            let mut filters = vec![format!("volume={:.3}", volume.max(0.0))];
+            if *fade_in_secs > 0.0 {
+                filters.push(format!(
+                    "afade=t=in:st=0:d={:.3}",
+                    fade_in_secs.max(0.0)
+                ));
+            }
+            if *fade_out_secs > 0.0 {
+                filters.push("areverse".into());
+                filters.push(format!(
+                    "afade=t=in:st=0:d={:.3}",
+                    fade_out_secs.max(0.0)
+                ));
+                filters.push("areverse".into());
+            }
+            Ok((
+                vec![
+                    "-y".into(),
+                    "-i".into(),
+                    input.clone(),
+                    "-map".into(),
+                    "0:v?".into(),
+                    "-map".into(),
+                    "0:a:0".into(),
+                    "-map".into(),
+                    "0:s?".into(),
+                    "-c:v".into(),
+                    "copy".into(),
+                    "-c:s".into(),
+                    "copy".into(),
+                    "-af".into(),
+                    filters.join(","),
+                    "-c:a".into(),
+                    "aac".into(),
+                    output.clone(),
+                ],
+                vec![],
+            ))
         }
     }
 }
