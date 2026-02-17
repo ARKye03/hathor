@@ -7,6 +7,22 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter};
 
+// ── Errors ────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, thiserror::Error)]
+pub enum FfmpegError {
+    #[error("merge requires at least 2 input files")]
+    MergeTooFewInputs,
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+    #[error("ffprobe failed: {0}")]
+    ProbeFailed(String),
+    #[error(transparent)]
+    Json(#[from] serde_json::Error),
+    #[error(transparent)]
+    SystemTime(#[from] std::time::SystemTimeError),
+}
+
 // ── Managed state ─────────────────────────────────────────────────────────────
 
 pub struct FfmpegState {
@@ -133,14 +149,11 @@ impl FfmpegOperation {
     }
 }
 
-fn create_concat_list(inputs: &[String]) -> Result<String, String> {
+fn create_concat_list(inputs: &[String]) -> Result<String, FfmpegError> {
     if inputs.len() < 2 {
-        return Err("Merge requires at least 2 input files.".to_string());
+        return Err(FfmpegError::MergeTooFewInputs);
     }
-    let ts = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|e| e.to_string())?
-        .as_nanos();
+    let ts = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
     let path =
         std::env::temp_dir().join(format!("hathor-concat-{}-{}.txt", std::process::id(), ts));
     let mut body = String::new();
@@ -149,11 +162,11 @@ fn create_concat_list(inputs: &[String]) -> Result<String, String> {
         body.push_str(&p.replace('\'', "'\\''"));
         body.push_str("'\n");
     }
-    fs::write(&path, body).map_err(|e| e.to_string())?;
+    fs::write(&path, body)?;
     Ok(path.to_string_lossy().to_string())
 }
 
-pub fn build_args(op: &FfmpegOperation) -> Result<(Vec<String>, Vec<String>), String> {
+pub fn build_args(op: &FfmpegOperation) -> Result<(Vec<String>, Vec<String>), FfmpegError> {
     match op {
         FfmpegOperation::Convert {
             input,
@@ -624,7 +637,7 @@ pub async fn run_ffmpeg(
     operation: FfmpegOperation,
     cleanup_partial: Option<bool>,
 ) -> Result<(), String> {
-    let (args, temp_files) = build_args(&operation)?;
+    let (args, temp_files) = build_args(&operation).map_err(|e| e.to_string())?;
     let output_path = operation.output_path().to_string();
     let cleanup_partial = cleanup_partial.unwrap_or(true);
     let command = format!(
@@ -811,8 +824,7 @@ struct ProbeTags {
     language_upper: Option<String>,
 }
 
-#[tauri::command]
-pub async fn probe_media(path: String) -> Result<MediaInfo, String> {
+async fn probe_media_inner(path: String) -> Result<MediaInfo, FfmpegError> {
     let output = tauri::async_runtime::spawn_blocking(move || {
         Command::new("ffprobe")
             .args([
@@ -825,16 +837,17 @@ pub async fn probe_media(path: String) -> Result<MediaInfo, String> {
                 &path,
             ])
             .output()
-            .map_err(|e| e.to_string())
     })
     .await
-    .map_err(|e| e.to_string())??;
+    .map_err(|e| std::io::Error::other(e.to_string()))??;
 
     if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).into_owned());
+        return Err(FfmpegError::ProbeFailed(
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        ));
     }
 
-    let probe: ProbeOutput = serde_json::from_slice(&output.stdout).map_err(|e| e.to_string())?;
+    let probe: ProbeOutput = serde_json::from_slice(&output.stdout)?;
 
     let streams = probe
         .streams
@@ -870,6 +883,11 @@ pub async fn probe_media(path: String) -> Result<MediaInfo, String> {
     })
 }
 
+#[tauri::command]
+pub async fn probe_media(path: String) -> Result<MediaInfo, String> {
+    probe_media_inner(path).await.map_err(|e| e.to_string())
+}
+
 const MEDIA_EXTENSIONS: [&str; 17] = [
     "mp4", "mkv", "mov", "webm", "m4v", "avi", "flv", "ts", "wmv", "mpg", "mpeg", "3gp", "mp3",
     "aac", "opus", "wav", "m4a",
@@ -882,7 +900,7 @@ fn is_media_file(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-fn collect_media_paths(path: &Path, out: &mut Vec<String>) -> Result<(), String> {
+fn collect_media_paths(path: &Path, out: &mut Vec<String>) -> Result<(), FfmpegError> {
     if path.is_file() {
         if is_media_file(path) {
             out.push(path.to_string_lossy().to_string());
@@ -894,10 +912,8 @@ fn collect_media_paths(path: &Path, out: &mut Vec<String>) -> Result<(), String>
         return Ok(());
     }
 
-    let entries = fs::read_dir(path).map_err(|e| e.to_string())?;
-    for entry in entries {
-        let entry = entry.map_err(|e| e.to_string())?;
-        let child = entry.path();
+    for entry in fs::read_dir(path)? {
+        let child = entry?.path();
         if child.is_dir() {
             collect_media_paths(&child, out)?;
         } else if child.is_file() && is_media_file(&child) {
@@ -912,7 +928,7 @@ pub async fn expand_media_inputs(paths: Vec<String>) -> Result<Vec<String>, Stri
     let mut out = Vec::<String>::new();
     for raw in paths {
         let path = PathBuf::from(raw);
-        collect_media_paths(&path, &mut out)?;
+        collect_media_paths(&path, &mut out).map_err(|e| e.to_string())?;
     }
     out.sort();
     out.dedup();
