@@ -31,6 +31,7 @@
   let queue = $state<QueueJob[]>([]);
   let selectedJobId = $state<string | null>(null);
   let queueRunning = $state(false);
+  let queuePaused = $state(false);
   let runningJobId = $state(""); // reactive so template can read it
   let stopRequested = false;
   let dropActive = $state(false);
@@ -234,6 +235,7 @@
   async function runQueue() {
     if (queueRunning) return;
     queueRunning = true;
+    queuePaused = false;
     stopRequested = false;
     for (const job of queue) {
       if (stopRequested) break;
@@ -241,6 +243,7 @@
       await runJob(job);
     }
     queueRunning = false;
+    queuePaused = stopRequested && queue.some((j) => j.status === "pending");
   }
 
   function stopQueue() { stopRequested = true; }
@@ -352,9 +355,10 @@
   const pendingCount = $derived(queue.filter(j => j.status === "pending").length);
   const selectedJob = $derived(queue.find(j => j.id === selectedJobId) ?? null);
 
-  type QueueStatus = "idle" | "running" | "done" | "error";
+  type QueueStatus = "idle" | "running" | "paused" | "done" | "error";
   const queueStatus = $derived<QueueStatus>(
     queueRunning ? "running" :
+    queuePaused ? "paused" :
     queue.length === 0 ? "idle" :
     queue.some(j => j.status === "error" || j.status === "cancelled") ? "error" :
     queue.every(j => j.status === "done") ? "done" :
@@ -437,8 +441,8 @@
       <!-- Status chip -->
       <div
         class="flex items-center gap-2 px-3 py-1 border text-[9px] font-semibold tracking-[0.2em] uppercase transition-colors"
-        class:text-muted-foreground={queueStatus === "idle"}
-        class:border-border={queueStatus === "idle"}
+        class:text-muted-foreground={queueStatus === "idle" || queueStatus === "paused"}
+        class:border-border={queueStatus === "idle" || queueStatus === "paused"}
         class:text-foreground={queueStatus === "running" || queueStatus === "done"}
         class:border-foreground={queueStatus === "running" || queueStatus === "done"}
         class:text-destructive={queueStatus === "error"}
@@ -749,7 +753,7 @@
             <button
               onclick={stopQueue}
               class="text-[9px] font-semibold tracking-[0.15em] uppercase text-muted-foreground hover:text-foreground transition-colors cursor-pointer border-0 bg-transparent px-0"
-            >Stop after current</button>
+            >Pause after current</button>
             <button
               onclick={handleCancel}
               class="text-[9px] font-semibold tracking-[0.15em] uppercase text-destructive hover:opacity-70 transition-opacity cursor-pointer border-0 bg-transparent px-0"
@@ -759,7 +763,7 @@
               onclick={runQueue}
               disabled={pendingCount === 0}
               class="text-[9px] font-semibold tracking-[0.15em] uppercase text-foreground hover:opacity-70 transition-opacity cursor-pointer border-0 bg-transparent px-0 disabled:opacity-30 disabled:cursor-not-allowed"
-            >▶ Run{pendingCount > 0 ? ` (${pendingCount})` : ""}</button>
+            >▶ {queuePaused ? "Resume" : "Run"}{pendingCount > 0 ? ` (${pendingCount})` : ""}</button>
             <button
               onclick={clearQueue}
               disabled={queue.length === 0}
