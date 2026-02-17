@@ -23,6 +23,7 @@ export type FfmpegOperation =
       rotate: 90 | 180 | 270 | null;
       flip: "horizontal" | "vertical" | "both" | null;
     }
+  | { type: "merge"; inputs: string[]; output: string }
   | { type: "compress"; input: string; output: string; crf: number }
   | { type: "remux"; input: string; output: string };
 

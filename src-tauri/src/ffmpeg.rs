@@ -4,7 +4,7 @@ use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter};
 
 // ── Managed state ─────────────────────────────────────────────────────────────
@@ -25,6 +25,7 @@ struct RunningProcess {
     child: Child,
     output_path: String,
     cleanup_partial: bool,
+    temp_files: Vec<String>,
 }
 
 // ── Operations ────────────────────────────────────────────────────────────────
@@ -62,6 +63,10 @@ pub enum FfmpegOperation {
         rotate: Option<u16>,
         flip: Option<String>, // "horizontal" | "vertical" | "both"
     },
+    Merge {
+        inputs: Vec<String>,
+        output: String,
+    },
     Remux {
         input: String,
         output: String,
@@ -90,12 +95,33 @@ impl FfmpegOperation {
             FfmpegOperation::Trim { output, .. } => output,
             FfmpegOperation::Compress { output, .. } => output,
             FfmpegOperation::Transform { output, .. } => output,
+            FfmpegOperation::Merge { output, .. } => output,
             FfmpegOperation::Remux { output, .. } => output,
         }
     }
 }
 
-pub fn build_args(op: &FfmpegOperation) -> Vec<String> {
+fn create_concat_list(inputs: &[String]) -> Result<String, String> {
+    if inputs.len() < 2 {
+        return Err("Merge requires at least 2 input files.".to_string());
+    }
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_nanos();
+    let path =
+        std::env::temp_dir().join(format!("hathor-concat-{}-{}.txt", std::process::id(), ts));
+    let mut body = String::new();
+    for p in inputs {
+        body.push_str("file '");
+        body.push_str(&p.replace('\'', "'\\''"));
+        body.push_str("'\n");
+    }
+    fs::write(&path, body).map_err(|e| e.to_string())?;
+    Ok(path.to_string_lossy().to_string())
+}
+
+pub fn build_args(op: &FfmpegOperation) -> Result<(Vec<String>, Vec<String>), String> {
     match op {
         FfmpegOperation::Convert {
             input,
@@ -134,7 +160,7 @@ pub fn build_args(op: &FfmpegOperation) -> Vec<String> {
                     format!("{filter_base},split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse");
                 args.extend(["-vf".into(), palette_filter]);
                 args.push(output.clone());
-                return args;
+                return Ok((args, vec![]));
             }
 
             let webm = container == "webm";
@@ -182,7 +208,7 @@ pub fn build_args(op: &FfmpegOperation) -> Vec<String> {
 
             args.extend(["-c:a".into(), acodec.into()]);
             args.push(output.clone());
-            args
+            Ok((args, vec![]))
         }
         FfmpegOperation::Trim {
             input,
@@ -192,34 +218,40 @@ pub fn build_args(op: &FfmpegOperation) -> Vec<String> {
             trim_mode,
         } => {
             if trim_mode.as_deref() == Some("fast") {
-                vec![
-                    "-y".into(),
-                    "-ss".into(),
-                    start.clone(),
-                    "-i".into(),
-                    input.clone(),
-                    "-t".into(),
-                    duration.clone(),
-                    "-c".into(),
-                    "copy".into(),
-                    "-avoid_negative_ts".into(),
-                    "make_zero".into(),
-                    output.clone(),
-                ]
+                Ok((
+                    vec![
+                        "-y".into(),
+                        "-ss".into(),
+                        start.clone(),
+                        "-i".into(),
+                        input.clone(),
+                        "-t".into(),
+                        duration.clone(),
+                        "-c".into(),
+                        "copy".into(),
+                        "-avoid_negative_ts".into(),
+                        "make_zero".into(),
+                        output.clone(),
+                    ],
+                    vec![],
+                ))
             } else {
-                vec![
-                    "-y".into(),
-                    "-i".into(),
-                    input.clone(),
-                    "-ss".into(),
-                    start.clone(),
-                    "-t".into(),
-                    duration.clone(),
-                    output.clone(),
-                ]
+                Ok((
+                    vec![
+                        "-y".into(),
+                        "-i".into(),
+                        input.clone(),
+                        "-ss".into(),
+                        start.clone(),
+                        "-t".into(),
+                        duration.clone(),
+                        output.clone(),
+                    ],
+                    vec![],
+                ))
             }
         }
-        FfmpegOperation::Compress { input, output, crf } => {
+        FfmpegOperation::Compress { input, output, crf } => Ok((
             vec![
                 "-y".into(),
                 "-i".into(),
@@ -229,8 +261,9 @@ pub fn build_args(op: &FfmpegOperation) -> Vec<String> {
                 "-crf".into(),
                 crf.to_string(),
                 output.clone(),
-            ]
-        }
+            ],
+            vec![],
+        )),
         FfmpegOperation::Transform {
             input,
             output,
@@ -299,9 +332,27 @@ pub fn build_args(op: &FfmpegOperation) -> Vec<String> {
                 "copy".into(),
             ]);
             args.push(output.clone());
-            args
+            Ok((args, vec![]))
         }
-        FfmpegOperation::Remux { input, output } => {
+        FfmpegOperation::Merge { inputs, output } => {
+            let list_path = create_concat_list(inputs)?;
+            Ok((
+                vec![
+                    "-y".into(),
+                    "-f".into(),
+                    "concat".into(),
+                    "-safe".into(),
+                    "0".into(),
+                    "-i".into(),
+                    list_path.clone(),
+                    "-c".into(),
+                    "copy".into(),
+                    output.clone(),
+                ],
+                vec![list_path],
+            ))
+        }
+        FfmpegOperation::Remux { input, output } => Ok((
             vec![
                 "-y".into(),
                 "-i".into(),
@@ -309,8 +360,9 @@ pub fn build_args(op: &FfmpegOperation) -> Vec<String> {
                 "-c".into(),
                 "copy".into(),
                 output.clone(),
-            ]
-        }
+            ],
+            vec![],
+        )),
     }
 }
 
@@ -393,6 +445,16 @@ fn cleanup_partial_output(path: &str) {
     }
 }
 
+fn cleanup_temp_files(paths: &[String]) {
+    for p in paths {
+        if let Err(e) = fs::remove_file(p) {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                eprintln!("failed to cleanup temp file '{}': {}", p, e);
+            }
+        }
+    }
+}
+
 // ── run_ffmpeg ────────────────────────────────────────────────────────────────
 
 #[tauri::command]
@@ -402,7 +464,7 @@ pub async fn run_ffmpeg(
     operation: FfmpegOperation,
     cleanup_partial: Option<bool>,
 ) -> Result<(), String> {
-    let args = build_args(&operation);
+    let (args, temp_files) = build_args(&operation)?;
     let output_path = operation.output_path().to_string();
     let cleanup_partial = cleanup_partial.unwrap_or(true);
     let command = format!(
@@ -431,11 +493,13 @@ pub async fn run_ffmpeg(
         let mut guard = state.running.lock().unwrap();
         if let Some(ref mut prev) = *guard {
             let _ = prev.child.kill();
+            cleanup_temp_files(&prev.temp_files);
         }
         *guard = Some(RunningProcess {
             child,
             output_path,
             cleanup_partial,
+            temp_files,
         });
     }
 
@@ -488,6 +552,7 @@ pub async fn run_ffmpeg(
             Some(ref mut p) => match p.child.try_wait() {
                 Ok(Some(status)) => {
                     let code = status.code().unwrap_or(-1);
+                    cleanup_temp_files(&p.temp_files);
                     *guard = None;
                     return code;
                 }
@@ -496,6 +561,7 @@ pub async fn run_ffmpeg(
                     std::thread::sleep(Duration::from_millis(50));
                 }
                 Err(_) => {
+                    cleanup_temp_files(&p.temp_files);
                     *guard = None;
                     return -1;
                 }
@@ -517,6 +583,7 @@ pub async fn cancel_ffmpeg(state: tauri::State<'_, FfmpegState>) -> Result<(), S
         if process.cleanup_partial {
             cleanup_partial_output(&process.output_path);
         }
+        cleanup_temp_files(&process.temp_files);
         // Leave process in state; the wait loop will reap it via try_wait.
     }
     Ok(())

@@ -9,7 +9,7 @@
   import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
   import { open, save } from "@tauri-apps/plugin-dialog";
 
-  type Tab = "convert" | "trim" | "transform" | "compress" | "remux";
+  type Tab = "convert" | "trim" | "transform" | "merge" | "compress" | "remux";
   type Container = "mp4" | "mkv" | "mov" | "webm" | "gif";
   type QualityMode = "crf" | "bitrate";
   type TrimMode = "fast" | "accurate";
@@ -73,6 +73,9 @@
   let transformPadColor = $state("#000000");
   let transformRotate = $state<Rotate>("keep");
   let transformFlip = $state<Flip>("none");
+  let mergeInputs = $state<string[]>([]);
+  let mergeOutput = $state("");
+  let mergeInfos = $state<(MediaInfo | null)[]>([]);
   let compressInput = $state("");
   let compressOutput = $state("");
   let compressCrf = $state(23);
@@ -181,6 +184,14 @@
     return `${dir}${base}_out.${ext}`;
   }
 
+  function inferMergeOutputPath(paths: string[]): string {
+    const first = paths[0] ?? "";
+    if (!first) return "";
+    const { dir, ext } = splitPath(first);
+    const outExt = ext || "mp4";
+    return `${dir}merged_out.${outExt}`;
+  }
+
   function buildOperation(inputOverride?: string, forceAutoOutput = false): FfmpegOperation {
     if (activeTab === "convert") {
       const input = inputOverride ?? convertInput;
@@ -225,6 +236,10 @@
         rotate: transformRotate === "keep" ? null : parseInt(transformRotate) as 90 | 180 | 270,
         flip: transformFlip === "none" ? null : transformFlip,
       };
+    } else if (activeTab === "merge") {
+      const inputs = inputOverride ? [inputOverride] : mergeInputs;
+      const output = forceAutoOutput || !mergeOutput ? inferMergeOutputPath(inputs) : mergeOutput;
+      return { type: "merge", inputs, output };
     } else if (activeTab === "compress") {
       const input = inputOverride ?? compressInput;
       const output = forceAutoOutput || !compressOutput ? inferOutputPath("compress", input) : compressOutput;
@@ -326,6 +341,10 @@
   }
 
   function jobLabel(job: QueueJob): string {
+    if (job.operation.type === "merge") {
+      const n = job.operation.inputs.length;
+      return n > 0 ? `merge ${n} file${n === 1 ? "" : "s"}` : "merge";
+    }
     const input = (job.operation as { input: string }).input;
     return input.split("/").pop() ?? input;
   }
@@ -351,6 +370,41 @@
     if (path) setter(path);
   }
 
+  async function pickMergeInputs() {
+    const picked = await open({ multiple: true, filters: VIDEO_FILTERS });
+    const paths = Array.isArray(picked) ? picked.filter((p): p is string => typeof p === "string") : [];
+    if (paths.length === 0) return;
+    const uniq = [...mergeInputs];
+    for (const p of paths) if (!uniq.includes(p)) uniq.push(p);
+    mergeInputs = uniq;
+    if (!mergeOutput) mergeOutput = inferMergeOutputPath(mergeInputs);
+    await refreshMergeInfos();
+  }
+
+  async function refreshMergeInfos() {
+    mergeInfos = await Promise.all(
+      mergeInputs.map(async (p) => {
+        try { return await probeMedia(p); } catch { return null; }
+      })
+    );
+  }
+
+  function removeMergeInput(idx: number) {
+    mergeInputs = mergeInputs.filter((_, i) => i !== idx);
+    mergeInfos = mergeInfos.filter((_, i) => i !== idx);
+  }
+
+  function moveMergeInput(idx: number, dir: -1 | 1) {
+    const to = idx + dir;
+    if (to < 0 || to >= mergeInputs.length) return;
+    const nextInputs = [...mergeInputs];
+    const nextInfos = [...mergeInfos];
+    [nextInputs[idx], nextInputs[to]] = [nextInputs[to], nextInputs[idx]];
+    [nextInfos[idx], nextInfos[to]] = [nextInfos[to], nextInfos[idx]];
+    mergeInputs = nextInputs;
+    mergeInfos = nextInfos;
+  }
+
   function applySingleImport(path: string) {
     if (activeTab === "convert") {
       convertInput = path;
@@ -361,6 +415,10 @@
     } else if (activeTab === "transform") {
       transformInput = path;
       if (!transformOutput) transformOutput = inferOutputPath("transform", path);
+    } else if (activeTab === "merge") {
+      if (!mergeInputs.includes(path)) mergeInputs = [...mergeInputs, path];
+      if (!mergeOutput) mergeOutput = inferMergeOutputPath(mergeInputs);
+      void refreshMergeInfos();
     } else if (activeTab === "compress") {
       compressInput = path;
       if (!compressOutput) compressOutput = inferOutputPath("compress", path);
@@ -377,6 +435,14 @@
       if (mediaPaths.length === 0) return;
       if (mediaPaths.length === 1) {
         applySingleImport(mediaPaths[0]);
+        return;
+      }
+      if (activeTab === "merge") {
+        const uniq = [...mergeInputs];
+        for (const p of mediaPaths) if (!uniq.includes(p)) uniq.push(p);
+        mergeInputs = uniq;
+        if (!mergeOutput) mergeOutput = inferMergeOutputPath(mergeInputs);
+        await refreshMergeInfos();
         return;
       }
       for (const path of mediaPaths) {
@@ -431,6 +497,27 @@
       ? Math.max(0, (encodeDuration - currentProgress.time_secs) / currentProgress.speed)
       : null
   );
+  const mergeMismatchWarning = $derived(() => {
+    if (mergeInputs.length < 2 || mergeInfos.length !== mergeInputs.length) return null;
+    const first = mergeInfos[0];
+    if (!first) return "Could not read metadata for the first file.";
+    const v0 = first.streams.find((s) => s.codec_type === "video");
+    const a0 = first.streams.find((s) => s.codec_type === "audio");
+    for (let i = 1; i < mergeInfos.length; i += 1) {
+      const cur = mergeInfos[i];
+      if (!cur) return "Could not read metadata for one or more files.";
+      const v = cur.streams.find((s) => s.codec_type === "video");
+      const a = cur.streams.find((s) => s.codec_type === "audio");
+      if (!!v0 !== !!v || !!a0 !== !!a) return "Stream layout mismatch detected (video/audio presence differs).";
+      if (v0 && v && (v.codec_name !== v0.codec_name || v.width !== v0.width || v.height !== v0.height)) {
+        return "Video codec or resolution mismatch detected; concat copy may fail.";
+      }
+      if (a0 && a && (a.codec_name !== a0.codec_name || a.channels !== a0.channels || a.sample_rate !== a0.sample_rate)) {
+        return "Audio stream mismatch detected; concat copy may fail.";
+      }
+    }
+    return null;
+  });
 
   // ── Formatting ────────────────────────────────────────────────────────────────
 
@@ -512,14 +599,14 @@
 
       <!-- Tabs -->
       <div class="flex border-b border-border flex-shrink-0">
-        {#each (["convert", "trim", "transform", "compress", "remux"] as Tab[]) as tab, i}
+        {#each (["convert", "trim", "transform", "merge", "compress", "remux"] as Tab[]) as tab, i}
           <button
             onclick={() => { activeTab = tab; mediaInfo = null; }}
             class="flex-1 py-3 text-[9px] font-semibold tracking-[0.18em] uppercase cursor-pointer bg-transparent border-0 border-r border-border transition-colors"
             class:text-foreground={activeTab === tab}
             class:tab-active={activeTab === tab}
             class:text-muted-foreground={activeTab !== tab}
-            class:border-r-0={i === 4}
+            class:border-r-0={i === 5}
           >
             {tab}
           </button>
@@ -779,6 +866,48 @@
               {/each}
             </div>
           </div>
+
+        {:else if activeTab === "merge"}
+          <div class="flex flex-col gap-2">
+            <span class="text-[9px] font-semibold tracking-[0.2em] uppercase text-muted-foreground">Inputs</span>
+            <div class="flex gap-2">
+              <button type="button" onclick={pickMergeInputs}
+                class="bg-input border border-border text-foreground text-[10px] tracking-[0.14em] uppercase font-semibold px-3 py-2 cursor-pointer hover:bg-muted transition-colors"
+              >+ Add Files</button>
+              <button type="button" onclick={() => { mergeInputs = []; mergeInfos = []; }}
+                class="bg-transparent border border-border text-muted-foreground text-[10px] tracking-[0.14em] uppercase font-semibold px-3 py-2 cursor-pointer hover:text-foreground transition-colors"
+              >Clear</button>
+            </div>
+            <div class="border border-border max-h-36 overflow-y-auto">
+              {#if mergeInputs.length === 0}
+                <p class="px-3 py-3 text-[10px] text-muted-foreground">Select 2+ files in playback order.</p>
+              {:else}
+                {#each mergeInputs as p, i}
+                  <div class="flex items-center gap-2 px-2 py-1.5 border-b border-border last:border-b-0">
+                    <span class="w-5 text-[9px] text-muted-foreground text-right tabular-nums">{String(i + 1).padStart(2, "0")}</span>
+                    <span class="flex-1 min-w-0 truncate text-[10px] font-mono text-foreground">{p.split("/").pop() ?? p}</span>
+                    <button type="button" onclick={() => moveMergeInput(i, -1)} class="text-[9px] text-muted-foreground hover:text-foreground">↑</button>
+                    <button type="button" onclick={() => moveMergeInput(i, 1)} class="text-[9px] text-muted-foreground hover:text-foreground">↓</button>
+                    <button type="button" onclick={() => removeMergeInput(i)} class="text-[9px] text-muted-foreground hover:text-destructive">×</button>
+                  </div>
+                {/each}
+              {/if}
+            </div>
+          </div>
+          <label class="flex flex-col gap-2">
+            <span class="text-[9px] font-semibold tracking-[0.2em] uppercase text-muted-foreground">Output</span>
+            <div class="flex">
+              <input type="text" spellcheck="false" bind:value={mergeOutput} placeholder="/path/to/output.mp4"
+                class="bg-input border border-border text-foreground font-mono text-[11px] px-3 py-2 flex-1 min-w-0 outline-none transition-colors placeholder:text-muted-foreground focus:border-foreground" />
+              <button type="button" aria-label="Browse" onclick={() => pickOutput((v) => mergeOutput = v)} class="browse-btn">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>
+              </button>
+            </div>
+          </label>
+          <p class="text-[9px] text-muted-foreground">Uses concat demuxer with stream copy for matching files.</p>
+          {#if mergeMismatchWarning}
+            <p class="text-[9px] text-destructive">{mergeMismatchWarning}</p>
+          {/if}
 
         {:else if activeTab === "compress"}
           <label class="flex flex-col gap-2">

@@ -41,9 +41,9 @@ This roadmap now tracks implementation status directly.
   - [x] Letterbox/pillarbox-style padding (target canvas + color)
   - [x] Rotate 90/180/270, flip
 
-- [ ] Merge / Concatenate
-  - [ ] Concat demuxer flow
-  - [ ] Source mismatch warnings
+- [x] Merge / Concatenate
+  - [x] Concat demuxer flow
+  - [x] Source mismatch warnings
 
 ## Audio Features
 
