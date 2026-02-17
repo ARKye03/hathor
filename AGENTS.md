@@ -65,6 +65,51 @@ cd src-tauri && cargo clippy
 2. Register it: `.invoke_handler(tauri::generate_handler![..., my_command])`
 3. Call from frontend: `import { invoke } from "@tauri-apps/api/core"; invoke("my_command", { args })`
 
+### Component Tree
+
+```
+src/lib/
+  types.ts                        # Shared TS types (Tab, Container, QueueJob, etc.)
+  format.ts                       # fmtDuration, fmtBytes, fmtFps, fmtChannels
+  ffmpeg.ts                       # FfmpegOperation, MediaInfo, FfmpegProgress + Tauri wrappers
+  theme.svelte.ts                 # theme singleton ($state-based)
+  components/
+    BrowseInput.svelte            # input + browse button (bindable value)
+    MediaInfoStrip.svelte         # probing indicator + metadata display
+    ProgressDisplay.svelte        # progress bar + stats (indeterminate or pct)
+    SettingsPanel.svelte          # theme, default output dir, cleanup toggle
+    QueueList.svelte              # job rows + empty state
+    LogView.svelte                # log header + command strip + scrolling log body
+    panels/
+      ConvertPanel.svelte
+      TrimPanel.svelte
+      TransformPanel.svelte
+      MergePanel.svelte           # includes mismatch warning logic
+      CompressPanel.svelte
+      RemuxPanel.svelte
+src/routes/+page.svelte           # orchestration only (~400 lines)
+src/app.css                       # global CSS including .browse-btn, .slider, .dot-pulse, .spinner
+```
+
+### Svelte 5 Patterns
+
+- Use `$bindable()` for child-to-parent state: `let { value = $bindable("") }: Props = $props()`
+- Use `$derived(expression)` — **not** `$derived(() => expression)` (the latter stores a function, not a value)
+- Cross-component CSS selectors need `:global()`: `:global(.fields-panel > * + *)`
+
+### Tauri Event Channels
+
+- `ffmpeg://log` — log lines from ffmpeg (string)
+- `ffmpeg://progress` — FfmpegProgress object
+- `ffmpeg://done` — exit code (number)
+- `ffmpeg://command` — full ffmpeg command string
+
+### localStorage Keys
+
+- `hathor-theme` — ThemePref ("light" | "dark" | "system")
+- `hathor-default-output-dir` — default output directory path
+- `hathor-cleanup-default` — "1" or "0"
+
 ## Skills
 
 Skills are reusable instruction bundles in `SKILL.md` files.
