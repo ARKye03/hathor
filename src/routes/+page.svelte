@@ -17,6 +17,7 @@
   import RefreshCw from "@lucide/svelte/icons/refresh-cw";
   import SlidersHorizontal from "@lucide/svelte/icons/sliders-horizontal";
   import AudioLines from "@lucide/svelte/icons/audio-lines";
+  import ImageIcon from "@lucide/svelte/icons/image";
   import Settings2 from "@lucide/svelte/icons/settings-2";
 
   import type { Tab, Container, QualityMode, TrimMode, Rotate, Flip, Resolution, Fps, QueueJob, QueueStatus, ModeItem } from "$lib/types";
@@ -30,6 +31,7 @@
   import ReplaceAudioPanel from "$lib/components/panels/ReplaceAudioPanel.svelte";
   import LoudnessPanel from "$lib/components/panels/LoudnessPanel.svelte";
   import AudioControlsPanel from "$lib/components/panels/AudioControlsPanel.svelte";
+  import ImagePanel from "$lib/components/panels/ImagePanel.svelte";
   import MediaInfoStrip from "$lib/components/MediaInfoStrip.svelte";
   import ProgressDisplay from "$lib/components/ProgressDisplay.svelte";
   import QueueList from "$lib/components/QueueList.svelte";
@@ -47,9 +49,11 @@
     { tab: "replace_audio", label: "Replace", icon: RefreshCw },
     { tab: "loudness", label: "Loudness", icon: AudioLines },
     { tab: "audio_controls", label: "Audio FX", icon: SlidersHorizontal },
+    { tab: "image", label: "Image", icon: ImageIcon },
   ];
   const VIDEO_MODE_TABS: Tab[] = ["convert", "trim", "transform", "merge", "compress", "remux"];
   const AUDIO_MODE_TABS: Tab[] = ["extract_audio", "replace_audio", "loudness", "audio_controls"];
+  const IMAGE_MODE_TABS: Tab[] = ["image"];
   const DEFAULT_OUTPUT_DIR_KEY = "hathor-default-output-dir";
   const DEFAULT_CLEANUP_KEY = "hathor-cleanup-default";
   const OUTPUT_TEMPLATE_KEY = "hathor-output-name-template";
@@ -130,6 +134,11 @@
   let audioControlsVolume = $state(1);
   let audioControlsFadeIn = $state(0);
   let audioControlsFadeOut = $state(0);
+
+  let imageInput = $state("");
+  let imageOutput = $state("");
+  let imageFormat = $state<"png" | "jpg" | "webp" | "avif" | "ico">("png");
+  let imageQuality = $state(82);
 
   // ── Probe + progress ──────────────────────────────────────────────────────────
 
@@ -246,6 +255,15 @@
     const cur = extractAudioOutput.slice(dot + 1).toLowerCase();
     if (["mp3", "aac", "opus", "wav"].includes(cur)) {
       extractAudioOutput = extractAudioOutput.slice(0, dot + 1) + extractAudioFormat;
+    }
+  });
+  $effect(() => {
+    if (!imageOutput) return;
+    const dot = imageOutput.lastIndexOf(".");
+    if (dot === -1) return;
+    const cur = imageOutput.slice(dot + 1).toLowerCase();
+    if (["png", "jpg", "jpeg", "webp", "avif", "ico"].includes(cur)) {
+      imageOutput = imageOutput.slice(0, dot + 1) + imageFormat;
     }
   });
 
@@ -411,6 +429,8 @@
       ? convertContainer
       : tab === "extract_audio"
       ? extractAudioFormat
+      : tab === "image"
+      ? imageFormat
       : tab === "replace_audio" || tab === "loudness" || tab === "audio_controls"
       ? (ext || "mp4")
       : tab === "remux"
@@ -484,6 +504,16 @@
         volume: Math.max(0, audioControlsVolume),
         fade_in_secs: Math.max(0, audioControlsFadeIn),
         fade_out_secs: Math.max(0, audioControlsFadeOut),
+      };
+    } else if (activeTab === "image") {
+      const input = inputOverride ?? imageInput;
+      const output = forceAutoOutput || !imageOutput ? inferOutputPath("image", input) : imageOutput;
+      return {
+        type: "image_convert",
+        input,
+        output,
+        format: imageFormat,
+        quality: Math.max(1, Math.min(100, imageQuality)),
       };
     } else {
       const input = inputOverride ?? remuxInput;
@@ -583,7 +613,14 @@
     probing = false;
   }
 
-  const VIDEO_FILTERS = [{ name: "Media", extensions: ["mp4", "mkv", "avi", "mov", "webm", "m4v", "flv", "ts", "wmv", "gif", "mp3", "aac", "opus", "wav", "m4a"] }];
+  const VIDEO_FILTERS = [{
+    name: "Media",
+    extensions: [
+      "mp4", "mkv", "avi", "mov", "webm", "m4v", "flv", "ts", "wmv", "gif",
+      "mp3", "aac", "opus", "wav", "m4a",
+      "png", "jpg", "jpeg", "webp", "avif", "ico"
+    ]
+  }];
 
   async function pickInput(setter: (v: string) => void) {
     const path = await open({ multiple: false, filters: VIDEO_FILTERS });
@@ -667,6 +704,9 @@
     } else if (activeTab === "audio_controls") {
       audioControlsInput = path;
       if (!audioControlsOutput) audioControlsOutput = inferOutputPath("audio_controls", path);
+    } else if (activeTab === "image") {
+      imageInput = path;
+      if (!imageOutput) imageOutput = inferOutputPath("image", path);
     } else {
       remuxInput = path;
       if (!remuxOutput) remuxOutput = inferOutputPath("remux", path);
@@ -799,6 +839,24 @@
         <div class="activity-group">
           <span class="activity-group-label">Audio</span>
           {#each MODES.filter((m) => AUDIO_MODE_TABS.includes(m.tab)) as mode}
+            {@const Icon = mode.icon}
+            <div class="tooltip tooltip-right" data-tip={mode.label}>
+              <button
+                type="button"
+                aria-label={mode.label}
+                onclick={() => { activeTab = mode.tab; mediaInfo = null; settingsOpen = false; }}
+                class="activity-btn"
+                class:activity-btn-active={activeTab === mode.tab && !settingsOpen}
+              >
+                <Icon size={17} strokeWidth={1.8} />
+              </button>
+            </div>
+          {/each}
+        </div>
+
+        <div class="activity-group">
+          <span class="activity-group-label">Image</span>
+          {#each MODES.filter((m) => IMAGE_MODE_TABS.includes(m.tab)) as mode}
             {@const Icon = mode.icon}
             <div class="tooltip tooltip-right" data-tip={mode.label}>
               <button
@@ -948,6 +1006,15 @@
             bind:fadeOutSecs={audioControlsFadeOut}
             onpickinput={() => pickInput((v) => audioControlsInput = v)}
             onpickoutput={() => pickOutput((v) => audioControlsOutput = v)}
+          />
+        {:else if activeTab === "image"}
+          <ImagePanel
+            bind:input={imageInput}
+            bind:output={imageOutput}
+            bind:format={imageFormat}
+            bind:quality={imageQuality}
+            onpickinput={() => pickInput((v) => imageInput = v)}
+            onpickoutput={() => pickOutput((v) => imageOutput = v)}
           />
         {:else}
           <RemuxPanel

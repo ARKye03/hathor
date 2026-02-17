@@ -11,7 +11,8 @@ export type Tab =
   | "extract_audio"
   | "replace_audio"
   | "loudness"
-  | "audio_controls";
+  | "audio_controls"
+  | "image";
 export type Container = "mp4" | "mkv" | "mov" | "webm" | "gif";
 export type QualityMode = "crf" | "bitrate";
 export type TrimMode = "fast" | "accurate";

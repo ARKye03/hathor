@@ -115,6 +115,12 @@ pub enum FfmpegOperation {
         fade_in_secs: f32,
         fade_out_secs: f32,
     },
+    ImageConvert {
+        input: String,
+        output: String,
+        format: String, // "png" | "jpg" | "webp" | "avif" | "ico"
+        quality: u8,    // 1..100
+    },
 }
 
 #[derive(Deserialize)]
@@ -145,6 +151,7 @@ impl FfmpegOperation {
             FfmpegOperation::ReplaceAudio { output, .. } => output,
             FfmpegOperation::Loudness { output, .. } => output,
             FfmpegOperation::AudioControls { output, .. } => output,
+            FfmpegOperation::ImageConvert { output, .. } => output,
         }
     }
 }
@@ -536,6 +543,50 @@ pub fn build_args(op: &FfmpegOperation) -> Result<(Vec<String>, Vec<String>), Ff
                 vec![],
             ))
         }
+        FfmpegOperation::ImageConvert {
+            input,
+            output,
+            format,
+            quality,
+        } => {
+            let q = (*quality).clamp(1, 100);
+            let mut args = vec!["-y".into(), "-i".into(), input.clone(), "-frames:v".into(), "1".into()];
+            match format.as_str() {
+                "jpg" => {
+                    let jpg_q = ((100 - q as u32) * 30 / 99 + 2).to_string();
+                    args.extend(["-c:v".into(), "mjpeg".into(), "-q:v".into(), jpg_q]);
+                }
+                "webp" => {
+                    args.extend(["-c:v".into(), "libwebp".into(), "-q:v".into(), q.to_string()]);
+                }
+                "avif" => {
+                    let crf = ((100 - q as u32) * 62 / 99).to_string();
+                    args.extend([
+                        "-c:v".into(),
+                        "libaom-av1".into(),
+                        "-still-picture".into(),
+                        "1".into(),
+                        "-crf".into(),
+                        crf,
+                        "-b:v".into(),
+                        "0".into(),
+                    ]);
+                }
+                "ico" => {
+                    args.extend([
+                        "-vf".into(),
+                        "scale=256:256:force_original_aspect_ratio=decrease,pad=256:256:(ow-iw)/2:(oh-ih)/2:color=0x00000000".into(),
+                        "-c:v".into(),
+                        "png".into(),
+                    ]);
+                }
+                _ => {
+                    args.extend(["-c:v".into(), "png".into(), "-compression_level".into(), "6".into()]);
+                }
+            }
+            args.push(output.clone());
+            Ok((args, vec![]))
+        }
     }
 }
 
@@ -888,9 +939,9 @@ pub async fn probe_media(path: String) -> Result<MediaInfo, String> {
     probe_media_inner(path).await.map_err(|e| e.to_string())
 }
 
-const MEDIA_EXTENSIONS: [&str; 17] = [
+const MEDIA_EXTENSIONS: [&str; 23] = [
     "mp4", "mkv", "mov", "webm", "m4v", "avi", "flv", "ts", "wmv", "mpg", "mpeg", "3gp", "mp3",
-    "aac", "opus", "wav", "m4a",
+    "aac", "opus", "wav", "m4a", "png", "jpg", "jpeg", "webp", "avif", "ico",
 ];
 
 fn is_media_file(path: &Path) -> bool {
