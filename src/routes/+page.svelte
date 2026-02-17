@@ -14,6 +14,9 @@
   import Minimize2 from "@lucide/svelte/icons/minimize-2";
   import Boxes from "@lucide/svelte/icons/boxes";
   import FileAudio2 from "@lucide/svelte/icons/file-audio-2";
+  import RefreshCw from "@lucide/svelte/icons/refresh-cw";
+  import SlidersHorizontal from "@lucide/svelte/icons/sliders-horizontal";
+  import AudioLines from "@lucide/svelte/icons/audio-lines";
   import Settings2 from "@lucide/svelte/icons/settings-2";
 
   import type { Tab, Container, QualityMode, TrimMode, Rotate, Flip, Resolution, Fps, QueueJob, QueueStatus, ModeItem } from "$lib/types";
@@ -41,10 +44,12 @@
     { tab: "compress", label: "Shrink", icon: Minimize2 },
     { tab: "remux", label: "Remux", icon: Boxes },
     { tab: "extract_audio", label: "Audio", icon: FileAudio2 },
-    { tab: "replace_audio", label: "Replace", icon: FileAudio2 },
-    { tab: "loudness", label: "Loudness", icon: FileAudio2 },
-    { tab: "audio_controls", label: "Audio FX", icon: FileAudio2 },
+    { tab: "replace_audio", label: "Replace", icon: RefreshCw },
+    { tab: "loudness", label: "Loudness", icon: AudioLines },
+    { tab: "audio_controls", label: "Audio FX", icon: SlidersHorizontal },
   ];
+  const VIDEO_MODE_TABS: Tab[] = ["convert", "trim", "transform", "merge", "compress", "remux"];
+  const AUDIO_MODE_TABS: Tab[] = ["extract_audio", "replace_audio", "loudness", "audio_controls"];
   const DEFAULT_OUTPUT_DIR_KEY = "hathor-default-output-dir";
   const DEFAULT_CLEANUP_KEY = "hathor-cleanup-default";
   const OUTPUT_TEMPLATE_KEY = "hathor-output-name-template";
@@ -773,19 +778,39 @@
     <!-- Activity Rail -->
     <nav class="activity-rail">
       <div class="activity-main">
-        {#each MODES as mode}
-          {@const Icon = mode.icon}
-          <button
-            type="button"
-            title={mode.label}
-            aria-label={mode.label}
-            onclick={() => { activeTab = mode.tab; mediaInfo = null; settingsOpen = false; }}
-            class="activity-btn"
-            class:activity-btn-active={activeTab === mode.tab && !settingsOpen}
-          >
-            <Icon size={17} strokeWidth={1.8} />
-          </button>
-        {/each}
+        <div class="activity-group">
+          <span class="activity-group-label">Video</span>
+          {#each MODES.filter((m) => VIDEO_MODE_TABS.includes(m.tab)) as mode}
+            {@const Icon = mode.icon}
+            <button
+              type="button"
+              title={mode.label}
+              aria-label={mode.label}
+              onclick={() => { activeTab = mode.tab; mediaInfo = null; settingsOpen = false; }}
+              class="activity-btn"
+              class:activity-btn-active={activeTab === mode.tab && !settingsOpen}
+            >
+              <Icon size={17} strokeWidth={1.8} />
+            </button>
+          {/each}
+        </div>
+
+        <div class="activity-group">
+          <span class="activity-group-label">Audio</span>
+          {#each MODES.filter((m) => AUDIO_MODE_TABS.includes(m.tab)) as mode}
+            {@const Icon = mode.icon}
+            <button
+              type="button"
+              title={mode.label}
+              aria-label={mode.label}
+              onclick={() => { activeTab = mode.tab; mediaInfo = null; settingsOpen = false; }}
+              class="activity-btn"
+              class:activity-btn-active={activeTab === mode.tab && !settingsOpen}
+            >
+              <Icon size={17} strokeWidth={1.8} />
+            </button>
+          {/each}
+        </div>
       </div>
       <div class="activity-foot">
         <button
@@ -1035,9 +1060,37 @@
   .activity-foot {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 10px;
     width: 100%;
     align-items: center;
+  }
+
+  .activity-main {
+    overflow-y: auto;
+    padding-bottom: 6px;
+  }
+
+  .activity-group {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    padding-top: 4px;
+  }
+
+  .activity-group + .activity-group {
+    margin-top: 4px;
+    padding-top: 10px;
+    border-top: 1px solid color-mix(in oklab, var(--border) 65%, transparent);
+  }
+
+  .activity-group-label {
+    font-size: 8px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--muted-foreground);
+    user-select: none;
   }
 
   .activity-btn {
