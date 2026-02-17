@@ -54,6 +54,11 @@
   const VIDEO_MODE_TABS: Tab[] = ["convert", "trim", "transform", "merge", "compress", "remux"];
   const AUDIO_MODE_TABS: Tab[] = ["extract_audio", "replace_audio", "loudness", "audio_controls"];
   const IMAGE_MODE_TABS: Tab[] = ["image"];
+  const RAIL_GROUPS: { label: string; icon: typeof FileVideo2; tabs: Tab[] }[] = [
+    { label: "Video", icon: FileVideo2, tabs: VIDEO_MODE_TABS },
+    { label: "Audio", icon: FileAudio2, tabs: AUDIO_MODE_TABS },
+    { label: "Image", icon: ImageIcon, tabs: IMAGE_MODE_TABS },
+  ];
   const DEFAULT_OUTPUT_DIR_KEY = "hathor-default-output-dir";
   const DEFAULT_CLEANUP_KEY = "hathor-cleanup-default";
   const OUTPUT_TEMPLATE_KEY = "hathor-output-name-template";
@@ -818,72 +823,46 @@
     <!-- Activity Rail -->
     <nav class="activity-rail">
       <div class="activity-main">
-        <div class="activity-group">
-          <span class="activity-group-label">Video</span>
-          {#each MODES.filter((m) => VIDEO_MODE_TABS.includes(m.tab)) as mode}
-            {@const Icon = mode.icon}
-            <div class="tooltip tooltip-right" data-tip={mode.label}>
-              <button
-                type="button"
-                aria-label={mode.label}
-                onclick={() => { activeTab = mode.tab; mediaInfo = null; settingsOpen = false; }}
-                class="activity-btn"
-                class:activity-btn-active={activeTab === mode.tab && !settingsOpen}
-              >
-                <Icon size={17} strokeWidth={1.8} />
-              </button>
-            </div>
-          {/each}
-        </div>
-
-        <div class="activity-group">
-          <span class="activity-group-label">Audio</span>
-          {#each MODES.filter((m) => AUDIO_MODE_TABS.includes(m.tab)) as mode}
-            {@const Icon = mode.icon}
-            <div class="tooltip tooltip-right" data-tip={mode.label}>
-              <button
-                type="button"
-                aria-label={mode.label}
-                onclick={() => { activeTab = mode.tab; mediaInfo = null; settingsOpen = false; }}
-                class="activity-btn"
-                class:activity-btn-active={activeTab === mode.tab && !settingsOpen}
-              >
-                <Icon size={17} strokeWidth={1.8} />
-              </button>
-            </div>
-          {/each}
-        </div>
-
-        <div class="activity-group">
-          <span class="activity-group-label">Image</span>
-          {#each MODES.filter((m) => IMAGE_MODE_TABS.includes(m.tab)) as mode}
-            {@const Icon = mode.icon}
-            <div class="tooltip tooltip-right" data-tip={mode.label}>
-              <button
-                type="button"
-                aria-label={mode.label}
-                onclick={() => { activeTab = mode.tab; mediaInfo = null; settingsOpen = false; }}
-                class="activity-btn"
-                class:activity-btn-active={activeTab === mode.tab && !settingsOpen}
-              >
-                <Icon size={17} strokeWidth={1.8} />
-              </button>
-            </div>
-          {/each}
-        </div>
+        {#each RAIL_GROUPS as group}
+          {@const GroupIcon = group.icon}
+          <div class="dropdown dropdown-right dropdown-hover activity-master">
+            <button
+              type="button"
+              aria-label={group.label}
+              class="activity-btn"
+              class:activity-btn-active={!settingsOpen && group.tabs.includes(activeTab)}
+            >
+              <GroupIcon size={17} strokeWidth={1.8} />
+            </button>
+            <ul class="dropdown-content menu activity-dropdown">
+              <li class="menu-title"><span>{group.label}</span></li>
+              {#each MODES.filter((m) => group.tabs.includes(m.tab)) as mode}
+                {@const Icon = mode.icon}
+                <li>
+                  <button
+                    type="button"
+                    class:activity-dropdown-btn-active={!settingsOpen && activeTab === mode.tab}
+                    onclick={() => { activeTab = mode.tab; settingsOpen = false; mediaInfo = null; }}
+                  >
+                    <Icon size={15} strokeWidth={1.8} />
+                    <span>{mode.label}</span>
+                  </button>
+                </li>
+              {/each}
+            </ul>
+          </div>
+        {/each}
       </div>
       <div class="activity-foot">
-        <div class="tooltip tooltip-right" data-tip="Settings">
-          <button
-            type="button"
-            aria-label="Settings"
-            class="activity-btn"
-            class:activity-btn-active={settingsOpen}
-            onclick={() => settingsOpen = !settingsOpen}
-          >
-            <Settings2 size={17} strokeWidth={1.8} />
-          </button>
-        </div>
+        <button
+          type="button"
+          aria-label="Settings"
+          class="activity-btn"
+          class:activity-btn-active={settingsOpen}
+          onclick={() => settingsOpen = !settingsOpen}
+        >
+          <Settings2 size={17} strokeWidth={1.8} />
+        </button>
       </div>
     </nav>
 
@@ -1130,42 +1109,66 @@
   .activity-foot {
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 12px;
     width: 100%;
     align-items: center;
   }
 
   .activity-main {
     overflow: visible;
-    padding-bottom: 6px;
+    padding: 4px 0 6px;
   }
 
-  .activity-main :global(.tooltip),
-  .activity-foot :global(.tooltip) {
-    z-index: 30;
-  }
-
-  .activity-group {
+  .activity-master {
     width: 100%;
     display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 6px;
-    padding-top: 4px;
+    justify-content: center;
   }
 
-  .activity-group + .activity-group {
-    margin-top: 4px;
-    padding-top: 10px;
-    border-top: 1px solid color-mix(in oklab, var(--border) 65%, transparent);
+  .activity-dropdown {
+    margin-left: 0;
+    transform: translateX(-1px);
+    min-width: 176px;
+    width: 176px;
+    border: 1px solid var(--border);
+    background: color-mix(in oklab, var(--card) 92%, var(--background) 8%);
+    box-shadow:
+      0 12px 30px color-mix(in oklab, var(--background) 68%, transparent),
+      inset 0 0 0 1px color-mix(in oklab, var(--foreground) 5%, transparent);
+    padding: 6px;
+    z-index: 40;
   }
 
-  .activity-group-label {
+  .activity-dropdown :global(.menu-title) {
+    padding: 2px 8px 6px;
     font-size: 8px;
-    letter-spacing: 0.16em;
+    letter-spacing: 0.2em;
     text-transform: uppercase;
     color: var(--muted-foreground);
-    user-select: none;
+  }
+
+  .activity-dropdown :global(li > button) {
+    border: 1px solid transparent;
+    border-radius: 0;
+    color: var(--muted-foreground);
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 7px 8px;
+    min-height: unset;
+    transition: color 120ms ease, background 120ms ease, border-color 120ms ease;
+  }
+
+  .activity-dropdown :global(li > button:hover) {
+    color: var(--foreground);
+    background: var(--muted);
+    border-color: color-mix(in oklab, var(--border) 85%, transparent);
+  }
+
+  .activity-dropdown-btn-active {
+    color: var(--foreground);
+    background: color-mix(in oklab, var(--muted) 70%, var(--card) 30%) !important;
+    border-color: var(--border) !important;
   }
 
   .activity-btn {
