@@ -9,17 +9,32 @@
   import { open, save } from "@tauri-apps/plugin-dialog";
 
   type Tab = "convert" | "trim" | "compress" | "remux";
-  type Status = "idle" | "running" | "done" | "error" | "cancelled";
-
-  let activeTab = $state<Tab>("convert");
-  let status = $state<Status>("idle");
-  let logs = $state<string[]>([]);
-  let logPanel = $state<HTMLDivElement | null>(null);
-
   type Container = "mp4" | "mkv" | "mov" | "webm";
   type QualityMode = "crf" | "bitrate";
   type Resolution = "keep" | "1080p" | "720p" | "480p";
   type Fps = "keep" | "24" | "30" | "60";
+
+  // ── Queue ─────────────────────────────────────────────────────────────────────
+
+  interface QueueJob {
+    id: string;
+    operation: FfmpegOperation;
+    status: "pending" | "running" | "done" | "error" | "cancelled";
+    logs: string[];
+    progress: FfmpegProgress | null;
+    durationSecs: number;
+  }
+
+  let queue = $state<QueueJob[]>([]);
+  let selectedJobId = $state<string | null>(null);
+  let queueRunning = $state(false);
+  let runningJobId = $state(""); // reactive so template can read it
+  let stopRequested = false;
+
+  // ── Form state ────────────────────────────────────────────────────────────────
+
+  let activeTab = $state<Tab>("convert");
+  let logPanel = $state<HTMLDivElement | null>(null);
 
   let convertInput = $state("");
   let convertOutput = $state("");
@@ -30,7 +45,60 @@
   let convertResolution = $state<Resolution>("keep");
   let convertFps = $state<Fps>("keep");
 
-  // Auto-update output extension when container changes.
+  let trimInput = $state("");
+  let trimOutput = $state("");
+  let trimStart = $state("00:00:00");
+  let trimDuration = $state("00:00:30");
+  let compressInput = $state("");
+  let compressOutput = $state("");
+  let compressCrf = $state(23);
+  let remuxInput = $state("");
+  let remuxOutput = $state("");
+
+  // ── Probe + progress ──────────────────────────────────────────────────────────
+
+  let mediaInfo = $state<MediaInfo | null>(null);
+  let probing = $state(false);
+  let currentProgress = $state<FfmpegProgress | null>(null);
+
+  // ── Listeners ─────────────────────────────────────────────────────────────────
+
+  let unlistenLog: UnlistenFn | null = null;
+  let unlistenDone: UnlistenFn | null = null;
+  let unlistenProgress: UnlistenFn | null = null;
+
+  onMount(async () => {
+    unlistenLog = await onLog(async (line) => {
+      const job = queue.find(j => j.id === runningJobId);
+      if (job) {
+        job.logs.push(line);
+        if (selectedJobId === runningJobId) {
+          await tick();
+          if (logPanel) logPanel.scrollTop = logPanel.scrollHeight;
+        }
+      }
+    });
+    unlistenDone = await onDone((code) => {
+      const job = queue.find(j => j.id === runningJobId);
+      if (job && job.status === "running") {
+        job.status = code === 0 ? "done" : "error";
+      }
+    });
+    unlistenProgress = await onProgress((p) => {
+      currentProgress = p;
+      const job = queue.find(j => j.id === runningJobId);
+      if (job) job.progress = p;
+    });
+  });
+
+  onDestroy(() => {
+    unlistenLog?.();
+    unlistenDone?.();
+    unlistenProgress?.();
+  });
+
+  // ── Auto-update output extension when container changes ───────────────────────
+
   const CONTAINERS: Container[] = ["mp4", "mkv", "mov", "webm"];
   $effect(() => {
     const ext = convertContainer;
@@ -42,45 +110,8 @@
       convertOutput = convertOutput.slice(0, dot + 1) + ext;
     }
   });
-  let trimInput = $state("");
-  let trimOutput = $state("");
-  let trimStart = $state("00:00:00");
-  let trimDuration = $state("00:00:30");
-  let compressInput = $state("");
-  let compressOutput = $state("");
-  let compressCrf = $state(23);
-  let remuxInput = $state("");
-  let remuxOutput = $state("");
 
-  // Probing + progress state
-  let mediaInfo = $state<MediaInfo | null>(null);
-  let probing = $state(false);
-  let currentProgress = $state<FfmpegProgress | null>(null);
-  let encodeDuration = $state(0);
-
-  let unlistenLog: UnlistenFn | null = null;
-  let unlistenDone: UnlistenFn | null = null;
-  let unlistenProgress: UnlistenFn | null = null;
-
-  onMount(async () => {
-    unlistenLog = await onLog(async (line) => {
-      logs = [...logs, line];
-      await tick();
-      if (logPanel) logPanel.scrollTop = logPanel.scrollHeight;
-    });
-    unlistenDone = await onDone((code) => {
-      if (status === "running") status = code === 0 ? "done" : "error";
-    });
-    unlistenProgress = await onProgress((p) => {
-      currentProgress = p;
-    });
-  });
-
-  onDestroy(() => {
-    unlistenLog?.();
-    unlistenDone?.();
-    unlistenProgress?.();
-  });
+  // ── Build operation ───────────────────────────────────────────────────────────
 
   function buildOperation(): FfmpegOperation {
     if (activeTab === "convert") {
@@ -104,30 +135,87 @@
     }
   }
 
-  async function handleRun() {
-    status = "running";
-    logs = [];
-    currentProgress = null;
-    encodeDuration = mediaInfo?.duration_secs ?? 0;
-    try {
-      await runFfmpeg(buildOperation());
-    } catch (e) {
-      logs = [...logs, `[error] ${e}`];
-      status = "error";
-    }
+  // ── Queue operations ──────────────────────────────────────────────────────────
+
+  function addToQueue() {
+    const job: QueueJob = {
+      id: crypto.randomUUID(),
+      operation: buildOperation(),
+      status: "pending",
+      logs: [],
+      progress: null,
+      durationSecs: mediaInfo?.duration_secs ?? 0,
+    };
+    queue.push(job);
+    if (!selectedJobId) selectedJobId = job.id;
   }
 
+  async function runJob(job: QueueJob): Promise<void> {
+    runningJobId = job.id;
+    selectedJobId = job.id;
+    job.status = "running";
+    job.logs = [];
+    job.progress = null;
+    currentProgress = null;
+    try {
+      await runFfmpeg(job.operation);
+      if (job.status === "running") job.status = "done";
+    } catch (e) {
+      job.logs.push(`[error] ${e}`);
+      if (job.status === "running") job.status = "error";
+    }
+    runningJobId = "";
+    currentProgress = null;
+  }
+
+  async function runQueue() {
+    if (queueRunning) return;
+    queueRunning = true;
+    stopRequested = false;
+    for (const job of queue) {
+      if (stopRequested) break;
+      if (job.status !== "pending") continue;
+      await runJob(job);
+    }
+    queueRunning = false;
+  }
+
+  function stopQueue() { stopRequested = true; }
+
   async function handleCancel() {
-    status = "cancelled";
+    const job = queue.find(j => j.id === runningJobId);
+    if (job) job.status = "cancelled";
     try { await cancelFfmpeg(); } catch {}
   }
+
+  function retryJob(id: string) {
+    const job = queue.find(j => j.id === id);
+    if (job) { job.status = "pending"; job.logs = []; job.progress = null; }
+  }
+
+  function removeJob(id: string) {
+    const idx = queue.findIndex(j => j.id === id);
+    if (idx !== -1) queue.splice(idx, 1);
+    if (selectedJobId === id) selectedJobId = queue[0]?.id ?? null;
+  }
+
+  function clearQueue() {
+    if (queueRunning) return;
+    queue.splice(0, queue.length);
+    selectedJobId = null;
+  }
+
+  function jobLabel(job: QueueJob): string {
+    const input = (job.operation as { input: string }).input;
+    return input.split("/").pop() ?? input;
+  }
+
+  // ── Probe + file pickers ──────────────────────────────────────────────────────
 
   async function probeFile(path: string) {
     probing = true;
     mediaInfo = null;
-    try {
-      mediaInfo = await probeMedia(path);
-    } catch {}
+    try { mediaInfo = await probeMedia(path); } catch {}
     probing = false;
   }
 
@@ -135,10 +223,7 @@
 
   async function pickInput(setter: (v: string) => void) {
     const path = await open({ multiple: false, filters: VIDEO_FILTERS });
-    if (typeof path === "string") {
-      setter(path);
-      probeFile(path);
-    }
+    if (typeof path === "string") { setter(path); probeFile(path); }
   }
 
   async function pickOutput(setter: (v: string) => void) {
@@ -146,7 +231,20 @@
     if (path) setter(path);
   }
 
-  const isRunning = $derived(status === "running");
+  // ── Derived ───────────────────────────────────────────────────────────────────
+
+  const isRunning = $derived(queueRunning);
+  const pendingCount = $derived(queue.filter(j => j.status === "pending").length);
+  const selectedJob = $derived(queue.find(j => j.id === selectedJobId) ?? null);
+
+  type QueueStatus = "idle" | "running" | "done" | "error";
+  const queueStatus = $derived<QueueStatus>(
+    queueRunning ? "running" :
+    queue.length === 0 ? "idle" :
+    queue.some(j => j.status === "error" || j.status === "cancelled") ? "error" :
+    queue.every(j => j.status === "done") ? "done" :
+    "idle"
+  );
 
   const crfLabel = $derived(
     compressCrf <= 17 ? "Lossless" :
@@ -156,13 +254,14 @@
   );
   const crfFill = $derived(`${((compressCrf / 51) * 100).toFixed(1)}%`);
 
+  const encodeDuration = $derived(queue.find(j => j.status === "running")?.durationSecs ?? 0);
   const progressPct = $derived(
     encodeDuration > 0 && currentProgress?.time_secs != null
       ? Math.min(100, (currentProgress.time_secs / encodeDuration) * 100)
       : null
   );
 
-  // ── Formatting helpers ────────────────────────────────────────────────────
+  // ── Formatting ────────────────────────────────────────────────────────────────
 
   function fmtDuration(secs: number): string {
     const h = Math.floor(secs / 3600);
@@ -218,18 +317,18 @@
       <!-- Status chip -->
       <div
         class="flex items-center gap-2 px-3 py-1 border text-[9px] font-semibold tracking-[0.2em] uppercase transition-colors"
-        class:text-muted-foreground={status === "idle"}
-        class:border-border={status === "idle"}
-        class:text-foreground={status === "running" || status === "done"}
-        class:border-foreground={status === "running" || status === "done"}
-        class:text-destructive={status === "error" || status === "cancelled"}
-        class:border-destructive={status === "error" || status === "cancelled"}
+        class:text-muted-foreground={queueStatus === "idle"}
+        class:border-border={queueStatus === "idle"}
+        class:text-foreground={queueStatus === "running" || queueStatus === "done"}
+        class:border-foreground={queueStatus === "running" || queueStatus === "done"}
+        class:text-destructive={queueStatus === "error"}
+        class:border-destructive={queueStatus === "error"}
       >
         <span
           class="inline-block w-[5px] h-[5px] bg-current flex-shrink-0"
-          class:dot-pulse={status === "running"}
+          class:dot-pulse={queueStatus === "running"}
         ></span>
-        {status}
+        {queueStatus}
       </div>
     </div>
   </header>
@@ -371,7 +470,7 @@
             <div class="flex">
               <input type="text" spellcheck="false" bind:value={trimInput} placeholder="/path/to/input.mp4"
                 class="bg-input border border-border text-foreground font-mono text-[11px] px-3 py-2 flex-1 min-w-0 outline-none transition-colors placeholder:text-muted-foreground focus:border-foreground" />
-              <button type="button" onclick={() => pickInput((v) => trimInput = v)} class="browse-btn">
+              <button type="button" aria-label="Browse" onclick={() => pickInput((v) => trimInput = v)} class="browse-btn">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>
               </button>
             </div>
@@ -381,7 +480,7 @@
             <div class="flex">
               <input type="text" spellcheck="false" bind:value={trimOutput} placeholder="/path/to/output.mp4"
                 class="bg-input border border-border text-foreground font-mono text-[11px] px-3 py-2 flex-1 min-w-0 outline-none transition-colors placeholder:text-muted-foreground focus:border-foreground" />
-              <button type="button" onclick={() => pickOutput((v) => trimOutput = v)} class="browse-btn">
+              <button type="button" aria-label="Browse" onclick={() => pickOutput((v) => trimOutput = v)} class="browse-btn">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>
               </button>
             </div>
@@ -405,7 +504,7 @@
             <div class="flex">
               <input type="text" spellcheck="false" bind:value={compressInput} placeholder="/path/to/input.mp4"
                 class="bg-input border border-border text-foreground font-mono text-[11px] px-3 py-2 flex-1 min-w-0 outline-none transition-colors placeholder:text-muted-foreground focus:border-foreground" />
-              <button type="button" onclick={() => pickInput((v) => compressInput = v)} class="browse-btn">
+              <button type="button" aria-label="Browse" onclick={() => pickInput((v) => compressInput = v)} class="browse-btn">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>
               </button>
             </div>
@@ -415,7 +514,7 @@
             <div class="flex">
               <input type="text" spellcheck="false" bind:value={compressOutput} placeholder="/path/to/output.mp4"
                 class="bg-input border border-border text-foreground font-mono text-[11px] px-3 py-2 flex-1 min-w-0 outline-none transition-colors placeholder:text-muted-foreground focus:border-foreground" />
-              <button type="button" onclick={() => pickOutput((v) => compressOutput = v)} class="browse-btn">
+              <button type="button" aria-label="Browse" onclick={() => pickOutput((v) => compressOutput = v)} class="browse-btn">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>
               </button>
             </div>
@@ -431,6 +530,7 @@
               <span>51 · Worst</span>
             </div>
           </div>
+
         {:else}
           <!-- Remux -->
           <div class="flex flex-col gap-1.5 pb-1">
@@ -444,7 +544,7 @@
             <div class="flex">
               <input type="text" spellcheck="false" bind:value={remuxInput} placeholder="/path/to/input.mkv"
                 class="bg-input border border-border text-foreground font-mono text-[11px] px-3 py-2 flex-1 min-w-0 outline-none transition-colors placeholder:text-muted-foreground focus:border-foreground" />
-              <button type="button" onclick={() => pickInput((v) => remuxInput = v)} aria-label="Browse" class="browse-btn">
+              <button type="button" aria-label="Browse" onclick={() => pickInput((v) => remuxInput = v)} class="browse-btn">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>
               </button>
             </div>
@@ -454,7 +554,7 @@
             <div class="flex">
               <input type="text" spellcheck="false" bind:value={remuxOutput} placeholder="/path/to/output.mp4"
                 class="bg-input border border-border text-foreground font-mono text-[11px] px-3 py-2 flex-1 min-w-0 outline-none transition-colors placeholder:text-muted-foreground focus:border-foreground" />
-              <button type="button" onclick={() => pickOutput((v) => remuxOutput = v)} aria-label="Browse" class="browse-btn">
+              <button type="button" aria-label="Browse" onclick={() => pickOutput((v) => remuxOutput = v)} class="browse-btn">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>
               </button>
             </div>
@@ -501,42 +601,104 @@
 
       </div>
 
-      <!-- Run / Cancel -->
-      <div class="p-4 pt-0 flex-shrink-0 flex gap-2">
+      <!-- Add to Queue button -->
+      <div class="p-4 pt-0 flex-shrink-0">
         <button
-          onclick={handleRun}
-          disabled={isRunning}
-          class="bg-primary text-primary-foreground font-mono text-[10px] tracking-[0.25em] uppercase font-semibold py-3 flex-1 border-0 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90 transition-opacity flex items-center justify-center gap-2"
+          onclick={addToQueue}
+          class="bg-primary text-primary-foreground font-mono text-[10px] tracking-[0.25em] uppercase font-semibold py-3 w-full border-0 cursor-pointer hover:opacity-90 transition-opacity flex items-center justify-center gap-2"
         >
-          {#if isRunning}
-            <span class="spinner"></span>Processing
-          {:else}
-            <span class="text-[9px]">▶</span>Run
-          {/if}
+          + Add to Queue
         </button>
-        {#if isRunning}
-          <button
-            onclick={handleCancel}
-            aria-label="Cancel"
-            class="border border-destructive text-destructive font-mono text-[10px] tracking-[0.2em] uppercase font-semibold py-3 px-4 cursor-pointer hover:bg-destructive hover:text-primary-foreground transition-colors flex-shrink-0"
-          >
-            ✕
-          </button>
-        {/if}
       </div>
     </aside>
 
-    <!-- Log Panel -->
+    <!-- Queue + Log Panel -->
     <section class="flex flex-col overflow-hidden">
+
+      <!-- Queue header -->
       <div class="h-10 flex items-center justify-between px-5 border-b border-border flex-shrink-0">
-        <span class="text-[9px] font-semibold tracking-[0.2em] uppercase text-muted-foreground">Output Log</span>
-        <span class="text-[9px] text-muted-foreground tabular-nums">{logs.length} lines</span>
+        <span class="text-[9px] font-semibold tracking-[0.2em] uppercase text-muted-foreground">
+          Queue{queue.length > 0 ? ` · ${queue.length}` : ""}
+        </span>
+        <div class="flex items-center gap-2">
+          {#if isRunning}
+            <button
+              onclick={stopQueue}
+              class="text-[9px] font-semibold tracking-[0.15em] uppercase text-muted-foreground hover:text-foreground transition-colors cursor-pointer border-0 bg-transparent px-0"
+            >Stop after current</button>
+            <button
+              onclick={handleCancel}
+              class="text-[9px] font-semibold tracking-[0.15em] uppercase text-destructive hover:opacity-70 transition-opacity cursor-pointer border-0 bg-transparent px-0"
+            >Cancel</button>
+          {:else}
+            <button
+              onclick={runQueue}
+              disabled={pendingCount === 0}
+              class="text-[9px] font-semibold tracking-[0.15em] uppercase text-foreground hover:opacity-70 transition-opacity cursor-pointer border-0 bg-transparent px-0 disabled:opacity-30 disabled:cursor-not-allowed"
+            >▶ Run{pendingCount > 0 ? ` (${pendingCount})` : ""}</button>
+            <button
+              onclick={clearQueue}
+              disabled={queue.length === 0}
+              class="text-[9px] font-semibold tracking-[0.15em] uppercase text-muted-foreground hover:text-foreground transition-colors cursor-pointer border-0 bg-transparent px-0 disabled:opacity-30 disabled:cursor-not-allowed"
+            >Clear</button>
+          {/if}
+        </div>
       </div>
 
-      <!-- Progress section -->
-      {#if currentProgress}
+      <!-- Job list -->
+      <div class="flex-shrink-0 overflow-y-auto border-b border-border" style="max-height: 180px;">
+        {#if queue.length === 0}
+          <p class="px-5 py-5 text-[11px] text-muted-foreground text-center tracking-widest">— add jobs using the form —</p>
+        {:else}
+          {#each queue as job}
+            <div
+              role="button"
+              tabindex="0"
+              onclick={() => selectedJobId = job.id}
+              onkeydown={(e) => e.key === "Enter" && (selectedJobId = job.id)}
+              class="flex items-center gap-3 px-5 py-2.5 border-b border-border last:border-b-0 cursor-pointer hover:bg-muted transition-colors"
+              class:bg-muted={selectedJobId === job.id}
+            >
+              <!-- Status dot -->
+              <span
+                class="w-[5px] h-[5px] flex-shrink-0 bg-current"
+                class:text-muted-foreground={job.status === "pending"}
+                class:text-foreground={job.status === "running" || job.status === "done"}
+                class:text-destructive={job.status === "error" || job.status === "cancelled"}
+                class:dot-pulse={job.status === "running"}
+              ></span>
+              <!-- Type badge -->
+              <span class="text-[8px] uppercase tracking-wider text-muted-foreground w-14 flex-shrink-0">{job.operation.type}</span>
+              <!-- Filename -->
+              <span class="flex-1 text-[11px] text-foreground truncate">{jobLabel(job)}</span>
+              <!-- Action -->
+              {#if job.status === "running"}
+                <span class="spinner flex-shrink-0"></span>
+              {:else if job.status === "done"}
+                <span class="text-[9px] text-foreground flex-shrink-0">✓</span>
+              {:else if job.status === "error" || job.status === "cancelled"}
+                <button
+                  type="button"
+                  aria-label="Retry job"
+                  onclick={(e) => { e.stopPropagation(); retryJob(job.id); }}
+                  class="text-[9px] text-muted-foreground hover:text-foreground transition-colors cursor-pointer border-0 bg-transparent flex-shrink-0"
+                >↺</button>
+              {:else if job.status === "pending"}
+                <button
+                  type="button"
+                  aria-label="Remove job"
+                  onclick={(e) => { e.stopPropagation(); removeJob(job.id); }}
+                  class="text-[9px] text-muted-foreground hover:text-destructive transition-colors cursor-pointer border-0 bg-transparent flex-shrink-0"
+                >×</button>
+              {/if}
+            </div>
+          {/each}
+        {/if}
+      </div>
+
+      <!-- Progress (shown when the selected job is the running one) -->
+      {#if currentProgress && selectedJobId === runningJobId && runningJobId !== ""}
         <div class="border-b border-border px-5 py-4 flex flex-col gap-3 flex-shrink-0">
-          <!-- Bar -->
           <div class="flex items-center gap-3">
             <div class="flex-1 h-px bg-border relative overflow-visible">
               {#if progressPct !== null}
@@ -552,7 +714,6 @@
               <span class="text-[9px] text-foreground tabular-nums w-9 text-right shrink-0">{progressPct.toFixed(0)}%</span>
             {/if}
           </div>
-          <!-- Stats -->
           <div class="flex flex-wrap gap-x-5 gap-y-1 text-[9px]">
             {#if currentProgress.time}
               <span class="text-foreground tabular-nums">
@@ -575,12 +736,20 @@
         </div>
       {/if}
 
+      <!-- Log header -->
+      <div class="h-10 flex items-center justify-between px-5 border-b border-border flex-shrink-0">
+        <span class="text-[9px] font-semibold tracking-[0.2em] uppercase text-muted-foreground truncate">
+          {selectedJob ? jobLabel(selectedJob) : "Output Log"}
+        </span>
+        <span class="text-[9px] text-muted-foreground tabular-nums flex-shrink-0 ml-3">{selectedJob?.logs.length ?? 0} lines</span>
+      </div>
+
       <!-- Log body -->
       <div class="flex-1 overflow-y-auto py-3" bind:this={logPanel}>
-        {#if logs.length === 0 && !currentProgress}
+        {#if !selectedJob || selectedJob.logs.length === 0}
           <p class="px-5 py-8 text-[11px] text-muted-foreground text-center tracking-widest">— awaiting process —</p>
         {:else}
-          {#each logs as line, i}
+          {#each selectedJob.logs as line, i}
             <div class="flex gap-4 px-5 py-px text-[11px] leading-relaxed hover:bg-muted">
               <span class="text-muted-foreground select-none shrink-0 w-9 text-right opacity-40 tabular-nums">{String(i + 1).padStart(4, "0")}</span>
               <span class="text-foreground break-all whitespace-pre-wrap">{line}</span>
