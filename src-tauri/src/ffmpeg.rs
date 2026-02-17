@@ -84,6 +84,34 @@ pub fn build_args(op: &FfmpegOperation) -> Vec<String> {
         } => {
             let mut args = vec!["-y".into(), "-i".into(), input.clone()];
 
+            if container == "gif" {
+                let mut filters = Vec::<String>::new();
+                if let Some(res) = resolution {
+                    let h: Option<u32> = match res.as_str() {
+                        "1080p" => Some(1080),
+                        "720p" => Some(720),
+                        "480p" => Some(480),
+                        _ => None,
+                    };
+                    if let Some(h) = h {
+                        filters.push(format!("scale=-2:{h}:flags=lanczos"));
+                    }
+                }
+                if let Some(f) = fps {
+                    filters.push(format!("fps={f}"));
+                }
+                let filter_base = if filters.is_empty() {
+                    "fps=15".to_string()
+                } else {
+                    filters.join(",")
+                };
+                let palette_filter =
+                    format!("{filter_base},split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse");
+                args.extend(["-vf".into(), palette_filter]);
+                args.push(output.clone());
+                return args;
+            }
+
             let webm = container == "webm";
             let vcodec = if webm { "libvpx-vp9" } else { "libx264" };
             let acodec = if webm { "libopus" } else { "aac" };

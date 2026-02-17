@@ -10,7 +10,7 @@
   import { open, save } from "@tauri-apps/plugin-dialog";
 
   type Tab = "convert" | "trim" | "compress" | "remux";
-  type Container = "mp4" | "mkv" | "mov" | "webm";
+  type Container = "mp4" | "mkv" | "mov" | "webm" | "gif";
   type QualityMode = "crf" | "bitrate";
   type Resolution = "keep" | "1080p" | "720p" | "480p";
   type Fps = "keep" | "24" | "30" | "60";
@@ -129,7 +129,7 @@
 
   // ── Auto-update output extension when container changes ───────────────────────
 
-  const CONTAINERS: Container[] = ["mp4", "mkv", "mov", "webm"];
+  const CONTAINERS: Container[] = ["mp4", "mkv", "mov", "webm", "gif"];
   $effect(() => {
     const ext = convertContainer;
     if (!convertOutput) return;
@@ -295,7 +295,7 @@
     probing = false;
   }
 
-  const VIDEO_FILTERS = [{ name: "Video", extensions: ["mp4", "mkv", "avi", "mov", "webm", "m4v", "flv", "ts", "wmv"] }];
+  const VIDEO_FILTERS = [{ name: "Media", extensions: ["mp4", "mkv", "avi", "mov", "webm", "m4v", "flv", "ts", "wmv", "gif"] }];
 
   async function pickInput(setter: (v: string) => void) {
     const path = await open({ multiple: false, filters: VIDEO_FILTERS });
@@ -499,14 +499,14 @@
           <div class="flex flex-col gap-2">
             <span class="text-[9px] font-semibold tracking-[0.2em] uppercase text-muted-foreground">Container</span>
             <div class="flex border border-border">
-              {#each (["mp4", "mkv", "mov", "webm"] as Container[]) as c, i}
+              {#each (["mp4", "mkv", "mov", "webm", "gif"] as Container[]) as c, i}
                 <button type="button" onclick={() => convertContainer = c}
                   class="flex-1 py-1.5 text-[9px] font-semibold tracking-[0.12em] uppercase font-mono border-0 border-r border-border cursor-pointer transition-colors"
                   class:bg-primary={convertContainer === c}
                   class:text-primary-foreground={convertContainer === c}
                   class:bg-transparent={convertContainer !== c}
                   class:text-muted-foreground={convertContainer !== c}
-                  class:border-r-0={i === 3}
+                  class:border-r-0={i === 4}
                 >{c}</button>
               {/each}
             </div>
