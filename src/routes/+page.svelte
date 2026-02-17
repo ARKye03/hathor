@@ -39,6 +39,8 @@
     { tab: "compress", label: "Shrink", icon: Minimize2 },
     { tab: "remux", label: "Remux", icon: Boxes },
   ];
+  const DEFAULT_OUTPUT_DIR_KEY = "hathor-default-output-dir";
+  const DEFAULT_CLEANUP_KEY = "hathor-cleanup-default";
 
   // ── Queue ─────────────────────────────────────────────────────────────────────
 
@@ -62,6 +64,8 @@
   let dropActive = $state(false);
   let cancelCleanupEnabled = $state(true);
   let logCollapsed = $state(false);
+  let settingsOpen = $state(false);
+  let defaultOutputDir = $state("");
 
   // ── Form state ────────────────────────────────────────────────────────────────
 
@@ -119,6 +123,12 @@
   let unlistenDragDrop: UnlistenFn | null = null;
 
   onMount(async () => {
+    try {
+      defaultOutputDir = localStorage.getItem(DEFAULT_OUTPUT_DIR_KEY) ?? "";
+      const cleanupPref = localStorage.getItem(DEFAULT_CLEANUP_KEY);
+      if (cleanupPref != null) cancelCleanupEnabled = cleanupPref === "1";
+    } catch {}
+
     unlistenLog = await onLog(async (line) => {
       const job = queue.find(j => j.id === runningJobId);
       if (job) {
@@ -169,6 +179,13 @@
     unlistenDragDrop?.();
   });
 
+  $effect(() => {
+    try {
+      localStorage.setItem(DEFAULT_OUTPUT_DIR_KEY, defaultOutputDir);
+      localStorage.setItem(DEFAULT_CLEANUP_KEY, cancelCleanupEnabled ? "1" : "0");
+    } catch {}
+  });
+
   // ── Auto-update output extension when container changes ───────────────────────
 
   const CONTAINERS: Container[] = ["mp4", "mkv", "mov", "webm", "gif"];
@@ -194,8 +211,15 @@
     return { dir, base: name.slice(0, dot), ext: name.slice(dot + 1) };
   }
 
+  function joinPath(dir: string, file: string): string {
+    if (!dir) return file;
+    const sep = dir.includes("\\") ? "\\" : "/";
+    return dir.endsWith("/") || dir.endsWith("\\") ? `${dir}${file}` : `${dir}${sep}${file}`;
+  }
+
   function inferOutputPath(tab: Tab, inputPath: string): string {
     const { dir, base } = splitPath(inputPath);
+    const outDir = defaultOutputDir || dir;
     const ext = tab === "convert"
       ? convertContainer
       : tab === "transform"
@@ -203,15 +227,16 @@
       : tab === "remux"
       ? "mp4"
       : "mp4";
-    return `${dir}${base}_out.${ext}`;
+    return joinPath(outDir, `${base}_out.${ext}`);
   }
 
   function inferMergeOutputPath(paths: string[]): string {
     const first = paths[0] ?? "";
     if (!first) return "";
     const { dir, ext } = splitPath(first);
+    const outDir = defaultOutputDir || dir;
     const outExt = ext || "mp4";
-    return `${dir}merged_out.${outExt}`;
+    return joinPath(outDir, `merged_out.${outExt}`);
   }
 
   function buildOperation(inputOverride?: string, forceAutoOutput = false): FfmpegOperation {
@@ -392,6 +417,11 @@
     if (path) setter(path);
   }
 
+  async function pickDefaultOutputDir() {
+    const path = await open({ directory: true, multiple: false });
+    if (typeof path === "string") defaultOutputDir = path;
+  }
+
   async function pickMergeInputs() {
     const picked = await open({ multiple: true, filters: VIDEO_FILTERS });
     const paths = Array.isArray(picked) ? picked.filter((p): p is string => typeof p === "string") : [];
@@ -482,6 +512,10 @@
 
   function toggleLogs() {
     logCollapsed = !logCollapsed;
+  }
+
+  function toggleSettings() {
+    settingsOpen = !settingsOpen;
   }
 
   // ── Derived ───────────────────────────────────────────────────────────────────
@@ -579,22 +613,7 @@
   <header class="h-12 flex items-center justify-between px-6 border-b border-border flex-shrink-0">
     <span class="text-[11px] font-bold tracking-[0.35em] uppercase select-none">HATHOR</span>
 
-    <div class="flex items-center gap-4">
-      <!-- Theme switcher -->
-      <div class="flex border border-border text-[9px] font-semibold tracking-[0.15em] uppercase">
-        {#each (["light", "dark", "system"] as ThemePref[]) as opt, i}
-          <button
-            onclick={() => theme.pref = opt}
-            class="px-2.5 py-1 font-mono border-0 border-r border-border cursor-pointer transition-colors"
-            class:bg-primary={theme.pref === opt}
-            class:text-primary-foreground={theme.pref === opt}
-            class:bg-transparent={theme.pref !== opt}
-            class:text-muted-foreground={theme.pref !== opt}
-            class:border-r-0={i === 2}
-          >{opt}</button>
-        {/each}
-      </div>
-
+    <div class="flex items-center">
       <!-- Status chip -->
       <div
         class="flex items-center gap-2 px-3 py-1 border text-[9px] font-semibold tracking-[0.2em] uppercase transition-colors"
@@ -626,7 +645,7 @@
             type="button"
             title={mode.label}
             aria-label={mode.label}
-            onclick={() => { activeTab = mode.tab; mediaInfo = null; }}
+            onclick={() => { activeTab = mode.tab; mediaInfo = null; settingsOpen = false; }}
             class="activity-btn"
             class:activity-btn-active={activeTab === mode.tab}
           >
@@ -640,6 +659,8 @@
           title="Settings"
           aria-label="Settings"
           class="activity-btn"
+          class:activity-btn-active={settingsOpen}
+          onclick={toggleSettings}
         >
           <Settings2 size={17} strokeWidth={1.8} />
         </button>
@@ -652,13 +673,53 @@
       <!-- Mode Header -->
       <div class="h-12 flex items-center justify-between px-5 border-b border-border flex-shrink-0">
         <span class="text-[9px] font-semibold tracking-[0.22em] uppercase text-muted-foreground">Mode</span>
-        <span class="text-[10px] font-semibold tracking-[0.18em] uppercase text-foreground">{activeMode.label}</span>
+        <span class="text-[10px] font-semibold tracking-[0.18em] uppercase text-foreground">{settingsOpen ? "Settings" : activeMode.label}</span>
       </div>
 
       <!-- Fields -->
       <div class="fields-panel flex-1 px-5 py-5 flex flex-col gap-4 overflow-y-auto">
 
-        {#if activeTab === "convert"}
+        {#if settingsOpen}
+          <div class="flex flex-col gap-2">
+            <span class="text-[9px] font-semibold tracking-[0.2em] uppercase text-muted-foreground">Theme</span>
+            <div class="flex border border-border">
+              {#each (["light", "dark", "system"] as ThemePref[]) as opt, i}
+                <button
+                  type="button"
+                  onclick={() => theme.pref = opt}
+                  class="flex-1 py-1.5 text-[9px] font-semibold tracking-[0.12em] uppercase border-0 border-r border-border cursor-pointer transition-colors"
+                  class:bg-primary={theme.pref === opt}
+                  class:text-primary-foreground={theme.pref === opt}
+                  class:bg-transparent={theme.pref !== opt}
+                  class:text-muted-foreground={theme.pref !== opt}
+                  class:border-r-0={i === 2}
+                >{opt}</button>
+              {/each}
+            </div>
+          </div>
+
+          <label class="flex flex-col gap-2">
+            <span class="text-[9px] font-semibold tracking-[0.2em] uppercase text-muted-foreground">Default Output Folder</span>
+            <div class="flex">
+              <input type="text" spellcheck="false" bind:value={defaultOutputDir} placeholder="Use source folder by default"
+                class="bg-input border border-border text-foreground font-mono text-[11px] px-3 py-2 flex-1 min-w-0 outline-none transition-colors placeholder:text-muted-foreground focus:border-foreground" />
+              <button type="button" aria-label="Browse" onclick={pickDefaultOutputDir} class="browse-btn">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>
+              </button>
+            </div>
+            <button type="button" onclick={() => defaultOutputDir = ""}
+              class="self-start text-[8px] font-semibold tracking-[0.15em] uppercase text-muted-foreground hover:text-foreground transition-colors border border-border px-2 py-1 bg-transparent cursor-pointer"
+            >Use Source Folder</button>
+          </label>
+
+          <label class="flex items-center gap-2 text-[9px] font-semibold tracking-[0.18em] uppercase text-muted-foreground">
+            <input type="checkbox" bind:checked={cancelCleanupEnabled} class="accent-current w-3 h-3" />
+            Cleanup Partial Output By Default
+          </label>
+
+          <p class="text-[9px] text-muted-foreground">These preferences apply to newly created queue jobs.</p>
+
+        {:else if activeTab === "convert"}
           <!-- Input -->
           <label class="flex flex-col gap-2">
             <span class="text-[9px] font-semibold tracking-[0.2em] uppercase text-muted-foreground">Input</span>
@@ -1056,12 +1117,21 @@
 
       <!-- Add to Queue button -->
       <div class="p-4 pt-0 flex-shrink-0">
-        <button
-          onclick={addToQueue}
-          class="primary-cta bg-foreground text-background text-[10px] tracking-[0.25em] uppercase font-semibold py-3 w-full border-0 cursor-pointer hover:opacity-90 transition-opacity flex items-center justify-center gap-2"
-        >
-          + Add to Queue
-        </button>
+        {#if settingsOpen}
+          <button
+            onclick={() => settingsOpen = false}
+            class="bg-input border border-border text-foreground text-[10px] tracking-[0.2em] uppercase font-semibold py-3 w-full cursor-pointer hover:bg-muted transition-colors"
+          >
+            Back to {activeMode.label}
+          </button>
+        {:else}
+          <button
+            onclick={addToQueue}
+            class="primary-cta bg-foreground text-background text-[10px] tracking-[0.25em] uppercase font-semibold py-3 w-full border-0 cursor-pointer hover:opacity-90 transition-opacity flex items-center justify-center gap-2"
+          >
+            + Add to Queue
+          </button>
+        {/if}
       </div>
     </aside>
 
