@@ -35,6 +35,7 @@
   let stopRequested = false;
   let dropActive = $state(false);
   let cancelCleanupEnabled = $state(true);
+  let logCollapsed = $state(false);
 
   // ── Form state ────────────────────────────────────────────────────────────────
 
@@ -339,6 +340,10 @@
     try {
       await navigator.clipboard.writeText(command);
     } catch {}
+  }
+
+  function toggleLogs() {
+    logCollapsed = !logCollapsed;
   }
 
   // ── Derived ───────────────────────────────────────────────────────────────────
@@ -877,10 +882,19 @@
         <span class="text-[9px] font-semibold tracking-[0.2em] uppercase text-muted-foreground truncate">
           {selectedJob ? jobLabel(selectedJob) : "Output Log"}
         </span>
-        <span class="text-[9px] text-muted-foreground tabular-nums flex-shrink-0 ml-3">{selectedJob?.logs.length ?? 0} lines</span>
+        <div class="flex items-center gap-3 flex-shrink-0 ml-3">
+          <span class="text-[9px] text-muted-foreground tabular-nums">{selectedJob?.logs.length ?? 0} lines</span>
+          <button
+            type="button"
+            onclick={toggleLogs}
+            class="text-[8px] font-semibold tracking-[0.15em] uppercase text-muted-foreground hover:text-foreground transition-colors cursor-pointer border border-border bg-transparent px-2 py-1"
+          >
+            {logCollapsed ? "Expand Logs" : "Collapse Logs"}
+          </button>
+        </div>
       </div>
 
-      {#if selectedJob?.command}
+      {#if !logCollapsed && selectedJob?.command}
         <div class="px-5 py-2 border-b border-border flex items-center gap-3">
           <code class="flex-1 text-[9px] text-muted-foreground truncate">{selectedJob.command}</code>
           <button
@@ -892,6 +906,18 @@
       {/if}
 
       <!-- Log body -->
+      <div
+        class="log-shell border-b border-border"
+        class:log-shell-collapsed={logCollapsed}
+      >
+      {#if logCollapsed}
+        <div class="h-10 px-5 flex items-center justify-between text-[10px]">
+          <span class="text-muted-foreground tracking-widest uppercase">Logs collapsed</span>
+          <span class="text-foreground truncate max-w-[60%] text-right">
+            {selectedJob?.logs.at(-1) ?? "— awaiting process —"}
+          </span>
+        </div>
+      {:else}
       <div class="flex-1 overflow-y-auto py-3" bind:this={logPanel}>
         {#if !selectedJob || selectedJob.logs.length === 0}
           <p class="px-5 py-8 text-[11px] text-muted-foreground text-center tracking-widest">— awaiting process —</p>
@@ -903,6 +929,8 @@
             </div>
           {/each}
         {/if}
+      </div>
+      {/if}
       </div>
     </section>
 
@@ -938,6 +966,7 @@
 
   /* Range slider */
   .slider {
+    appearance: none;
     -webkit-appearance: none;
     height: 1px;
     background: linear-gradient(
@@ -985,6 +1014,20 @@
   @keyframes indeterminate {
     0%   { left: -30%; }
     100% { left: 100%; }
+  }
+
+  .log-shell {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    flex: 1;
+    transition: flex 180ms ease, max-height 180ms ease;
+  }
+
+  .log-shell-collapsed {
+    flex: 0 0 auto;
+    max-height: 40px;
+    border-bottom: none;
   }
 
   /* Scrollbars */
