@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
+use std::fs;
 use std::io::{BufReader, Read};
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -8,13 +10,21 @@ use tauri::{AppHandle, Emitter};
 // ── Managed state ─────────────────────────────────────────────────────────────
 
 pub struct FfmpegState {
-    child: Arc<Mutex<Option<Child>>>,
+    running: Arc<Mutex<Option<RunningProcess>>>,
 }
 
 impl FfmpegState {
     pub fn new() -> Self {
-        Self { child: Arc::new(Mutex::new(None)) }
+        Self {
+            running: Arc::new(Mutex::new(None)),
+        }
     }
+}
+
+struct RunningProcess {
+    child: Child,
+    output_path: String,
+    cleanup_partial: bool,
 }
 
 // ── Operations ────────────────────────────────────────────────────────────────
@@ -28,18 +38,50 @@ pub enum FfmpegOperation {
         container: String,    // "mp4" | "mkv" | "mov" | "webm"
         quality_mode: String, // "crf" | "bitrate"
         crf: Option<u32>,
-        bitrate: Option<String>,  // e.g. "2000k"
+        bitrate: Option<String>,    // e.g. "2000k"
         resolution: Option<String>, // "1080p" | "720p" | "480p" | null = keep
         fps: Option<u32>,           // null = keep
     },
-    Trim { input: String, output: String, start: String, duration: String },
-    Compress { input: String, output: String, crf: u32 },
-    Remux { input: String, output: String },
+    Trim {
+        input: String,
+        output: String,
+        start: String,
+        duration: String,
+    },
+    Compress {
+        input: String,
+        output: String,
+        crf: u32,
+    },
+    Remux {
+        input: String,
+        output: String,
+    },
+}
+
+impl FfmpegOperation {
+    fn output_path(&self) -> &str {
+        match self {
+            FfmpegOperation::Convert { output, .. } => output,
+            FfmpegOperation::Trim { output, .. } => output,
+            FfmpegOperation::Compress { output, .. } => output,
+            FfmpegOperation::Remux { output, .. } => output,
+        }
+    }
 }
 
 pub fn build_args(op: &FfmpegOperation) -> Vec<String> {
     match op {
-        FfmpegOperation::Convert { input, output, container, quality_mode, crf, bitrate, resolution, fps } => {
+        FfmpegOperation::Convert {
+            input,
+            output,
+            container,
+            quality_mode,
+            crf,
+            bitrate,
+            resolution,
+            fps,
+        } => {
             let mut args = vec!["-y".into(), "-i".into(), input.clone()];
 
             let webm = container == "webm";
@@ -56,7 +98,9 @@ pub fn build_args(op: &FfmpegOperation) -> Vec<String> {
                 _ => {
                     let q = crf.unwrap_or(23);
                     args.extend(["-crf".into(), q.to_string()]);
-                    if webm { args.extend(["-b:v".into(), "0".into()]); }
+                    if webm {
+                        args.extend(["-b:v".into(), "0".into()]);
+                    }
                 }
             }
             if !webm {
@@ -67,11 +111,18 @@ pub fn build_args(op: &FfmpegOperation) -> Vec<String> {
             let mut filters = Vec::<String>::new();
             if let Some(res) = resolution {
                 let h: Option<u32> = match res.as_str() {
-                    "1080p" => Some(1080), "720p" => Some(720), "480p" => Some(480), _ => None,
+                    "1080p" => Some(1080),
+                    "720p" => Some(720),
+                    "480p" => Some(480),
+                    _ => None,
                 };
-                if let Some(h) = h { filters.push(format!("scale=-2:{h}")); }
+                if let Some(h) = h {
+                    filters.push(format!("scale=-2:{h}"));
+                }
             }
-            if let Some(f) = fps { filters.push(format!("fps={f}")); }
+            if let Some(f) = fps {
+                filters.push(format!("fps={f}"));
+            }
             if !filters.is_empty() {
                 args.extend(["-vf".into(), filters.join(",")]);
             }
@@ -80,24 +131,44 @@ pub fn build_args(op: &FfmpegOperation) -> Vec<String> {
             args.push(output.clone());
             args
         }
-        FfmpegOperation::Trim { input, output, start, duration } => {
+        FfmpegOperation::Trim {
+            input,
+            output,
+            start,
+            duration,
+        } => {
             vec![
-                "-y".into(), "-i".into(), input.clone(),
-                "-ss".into(), start.clone(),
-                "-t".into(), duration.clone(),
+                "-y".into(),
+                "-i".into(),
+                input.clone(),
+                "-ss".into(),
+                start.clone(),
+                "-t".into(),
+                duration.clone(),
                 output.clone(),
             ]
         }
         FfmpegOperation::Compress { input, output, crf } => {
             vec![
-                "-y".into(), "-i".into(), input.clone(),
-                "-vcodec".into(), "libx264".into(),
-                "-crf".into(), crf.to_string(),
+                "-y".into(),
+                "-i".into(),
+                input.clone(),
+                "-vcodec".into(),
+                "libx264".into(),
+                "-crf".into(),
+                crf.to_string(),
                 output.clone(),
             ]
         }
         FfmpegOperation::Remux { input, output } => {
-            vec!["-y".into(), "-i".into(), input.clone(), "-c".into(), "copy".into(), output.clone()]
+            vec![
+                "-y".into(),
+                "-i".into(),
+                input.clone(),
+                "-c".into(),
+                "copy".into(),
+                output.clone(),
+            ]
         }
     }
 }
@@ -118,9 +189,15 @@ pub struct FfmpegProgress {
 fn extract_field(line: &str, key: &str) -> Option<String> {
     let start = line.find(key)?.checked_add(key.len())?;
     let rest = line.get(start..)?.trim_start();
-    let end = rest.find(|c: char| c.is_ascii_whitespace()).unwrap_or(rest.len());
+    let end = rest
+        .find(|c: char| c.is_ascii_whitespace())
+        .unwrap_or(rest.len());
     let val = rest.get(..end)?.trim();
-    if val.is_empty() || val == "N/A" { None } else { Some(val.to_string()) }
+    if val.is_empty() || val == "N/A" {
+        None
+    } else {
+        Some(val.to_string())
+    }
 }
 
 fn time_to_secs(t: &str) -> Option<f64> {
@@ -156,6 +233,25 @@ fn parse_progress(line: &str) -> Option<FfmpegProgress> {
     })
 }
 
+fn shell_escape(arg: &str) -> String {
+    if arg
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || "-_./:=".contains(c))
+    {
+        arg.to_string()
+    } else {
+        format!("'{}'", arg.replace('\'', "'\\''"))
+    }
+}
+
+fn cleanup_partial_output(path: &str) {
+    if let Err(e) = fs::remove_file(path) {
+        if e.kind() != std::io::ErrorKind::NotFound {
+            eprintln!("failed to cleanup partial output '{}': {}", path, e);
+        }
+    }
+}
+
 // ── run_ffmpeg ────────────────────────────────────────────────────────────────
 
 #[tauri::command]
@@ -163,8 +259,19 @@ pub async fn run_ffmpeg(
     app: AppHandle,
     state: tauri::State<'_, FfmpegState>,
     operation: FfmpegOperation,
+    cleanup_partial: Option<bool>,
 ) -> Result<(), String> {
     let args = build_args(&operation);
+    let output_path = operation.output_path().to_string();
+    let cleanup_partial = cleanup_partial.unwrap_or(true);
+    let command = format!(
+        "ffmpeg {}",
+        args.iter()
+            .map(|a| shell_escape(a))
+            .collect::<Vec<_>>()
+            .join(" ")
+    );
+    let _ = app.emit("ffmpeg://command", command);
 
     let mut child = Command::new("ffmpeg")
         .args(&args)
@@ -173,18 +280,25 @@ pub async fn run_ffmpeg(
         .spawn()
         .map_err(|e| e.to_string())?;
 
-    let stderr = child.stderr.take().unwrap();
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or("Failed to capture ffmpeg stderr")?;
 
     // Kill any previous job, store this child.
     {
-        let mut guard = state.child.lock().unwrap();
+        let mut guard = state.running.lock().unwrap();
         if let Some(ref mut prev) = *guard {
-            let _ = prev.kill();
+            let _ = prev.child.kill();
         }
-        *guard = Some(child);
+        *guard = Some(RunningProcess {
+            child,
+            output_path,
+            cleanup_partial,
+        });
     }
 
-    let child_arc = Arc::clone(&state.child);
+    let child_arc = Arc::clone(&state.running);
     let app_clone = app.clone();
 
     // Read stderr in background, splitting on \r and \n.
@@ -202,7 +316,9 @@ pub async fn run_ffmpeg(
                     while let Some(pos) = pending.find(|c| c == '\r' || c == '\n') {
                         let line = pending[..pos].trim().to_string();
                         pending = pending[pos + 1..].to_string();
-                        if line.is_empty() { continue; }
+                        if line.is_empty() {
+                            continue;
+                        }
                         if let Some(progress) = parse_progress(&line) {
                             let _ = app_clone.emit("ffmpeg://progress", progress);
                         } else {
@@ -228,7 +344,7 @@ pub async fn run_ffmpeg(
         let mut guard = child_arc.lock().unwrap();
         match *guard {
             None => return -1, // cancelled — child was taken
-            Some(ref mut c) => match c.try_wait() {
+            Some(ref mut p) => match p.child.try_wait() {
                 Ok(Some(status)) => {
                     let code = status.code().unwrap_or(-1);
                     *guard = None;
@@ -254,10 +370,13 @@ pub async fn run_ffmpeg(
 
 #[tauri::command]
 pub async fn cancel_ffmpeg(state: tauri::State<'_, FfmpegState>) -> Result<(), String> {
-    let mut guard = state.child.lock().unwrap();
-    if let Some(ref mut child) = *guard {
-        child.kill().map_err(|e| e.to_string())?;
-        // Leave child in state; the wait loop will reap it via try_wait.
+    let mut guard = state.running.lock().unwrap();
+    if let Some(ref mut process) = *guard {
+        process.child.kill().map_err(|e| e.to_string())?;
+        if process.cleanup_partial {
+            cleanup_partial_output(&process.output_path);
+        }
+        // Leave process in state; the wait loop will reap it via try_wait.
     }
     Ok(())
 }
@@ -326,8 +445,10 @@ pub async fn probe_media(path: String) -> Result<MediaInfo, String> {
     let output = tauri::async_runtime::spawn_blocking(move || {
         Command::new("ffprobe")
             .args([
-                "-v", "quiet",
-                "-print_format", "json",
+                "-v",
+                "quiet",
+                "-print_format",
+                "json",
                 "-show_format",
                 "-show_streams",
                 &path,
@@ -342,8 +463,7 @@ pub async fn probe_media(path: String) -> Result<MediaInfo, String> {
         return Err(String::from_utf8_lossy(&output.stderr).into_owned());
     }
 
-    let probe: ProbeOutput =
-        serde_json::from_slice(&output.stdout).map_err(|e| e.to_string())?;
+    let probe: ProbeOutput = serde_json::from_slice(&output.stdout).map_err(|e| e.to_string())?;
 
     let streams = probe
         .streams
@@ -369,8 +489,61 @@ pub async fn probe_media(path: String) -> Result<MediaInfo, String> {
             .and_then(|d| d.parse().ok())
             .unwrap_or(0.0),
         format: probe.format.format_name,
-        bit_rate: probe.format.bit_rate.as_deref().and_then(|b| b.parse().ok()),
+        bit_rate: probe
+            .format
+            .bit_rate
+            .as_deref()
+            .and_then(|b| b.parse().ok()),
         size_bytes: probe.format.size.as_deref().and_then(|s| s.parse().ok()),
         streams,
     })
+}
+
+const MEDIA_EXTENSIONS: [&str; 17] = [
+    "mp4", "mkv", "mov", "webm", "m4v", "avi", "flv", "ts", "wmv", "mpg", "mpeg", "3gp", "mp3",
+    "aac", "opus", "wav", "m4a",
+];
+
+fn is_media_file(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| MEDIA_EXTENSIONS.contains(&ext.to_ascii_lowercase().as_str()))
+        .unwrap_or(false)
+}
+
+fn collect_media_paths(path: &Path, out: &mut Vec<String>) -> Result<(), String> {
+    if path.is_file() {
+        if is_media_file(path) {
+            out.push(path.to_string_lossy().to_string());
+        }
+        return Ok(());
+    }
+
+    if !path.is_dir() {
+        return Ok(());
+    }
+
+    let entries = fs::read_dir(path).map_err(|e| e.to_string())?;
+    for entry in entries {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let child = entry.path();
+        if child.is_dir() {
+            collect_media_paths(&child, out)?;
+        } else if child.is_file() && is_media_file(&child) {
+            out.push(child.to_string_lossy().to_string());
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn expand_media_inputs(paths: Vec<String>) -> Result<Vec<String>, String> {
+    let mut out = Vec::<String>::new();
+    for raw in paths {
+        let path = PathBuf::from(raw);
+        collect_media_paths(&path, &mut out)?;
+    }
+    out.sort();
+    out.dedup();
+    Ok(out)
 }

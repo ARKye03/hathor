@@ -47,12 +47,16 @@ export interface FfmpegProgress {
   size_kb: number | null;
 }
 
-export function runFfmpeg(op: FfmpegOperation): Promise<void> {
-  return invoke("run_ffmpeg", { operation: op });
+export function runFfmpeg(op: FfmpegOperation, opts?: { cleanupPartial?: boolean }): Promise<void> {
+  return invoke("run_ffmpeg", { operation: op, cleanupPartial: opts?.cleanupPartial ?? true });
 }
 
 export function probeMedia(path: string): Promise<MediaInfo> {
   return invoke("probe_media", { path });
+}
+
+export function expandMediaInputs(paths: string[]): Promise<string[]> {
+  return invoke("expand_media_inputs", { paths });
 }
 
 export function onLog(cb: (line: string) => void): Promise<UnlistenFn> {
@@ -65,6 +69,10 @@ export function onProgress(cb: (p: FfmpegProgress) => void): Promise<UnlistenFn>
 
 export function onDone(cb: (exitCode: number) => void): Promise<UnlistenFn> {
   return listen<number>("ffmpeg://done", (e) => cb(e.payload));
+}
+
+export function onCommand(cb: (command: string) => void): Promise<UnlistenFn> {
+  return listen<string>("ffmpeg://command", (e) => cb(e.payload));
 }
 
 export function cancelFfmpeg(): Promise<void> {

@@ -1,11 +1,12 @@
 <script lang="ts">
   import { onMount, onDestroy, tick } from "svelte";
   import {
-    runFfmpeg, cancelFfmpeg, onLog, onDone, onProgress, probeMedia,
+    runFfmpeg, cancelFfmpeg, onLog, onDone, onProgress, onCommand, probeMedia, expandMediaInputs,
     type FfmpegOperation, type MediaInfo, type FfmpegProgress
   } from "$lib/ffmpeg";
   import { theme, type ThemePref } from "$lib/theme.svelte";
   import type { UnlistenFn } from "@tauri-apps/api/event";
+  import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
   import { open, save } from "@tauri-apps/plugin-dialog";
 
   type Tab = "convert" | "trim" | "compress" | "remux";
@@ -23,6 +24,8 @@
     logs: string[];
     progress: FfmpegProgress | null;
     durationSecs: number;
+    command: string;
+    cleanupPartial: boolean;
   }
 
   let queue = $state<QueueJob[]>([]);
@@ -30,6 +33,8 @@
   let queueRunning = $state(false);
   let runningJobId = $state(""); // reactive so template can read it
   let stopRequested = false;
+  let dropActive = $state(false);
+  let cancelCleanupEnabled = $state(true);
 
   // ── Form state ────────────────────────────────────────────────────────────────
 
@@ -66,6 +71,8 @@
   let unlistenLog: UnlistenFn | null = null;
   let unlistenDone: UnlistenFn | null = null;
   let unlistenProgress: UnlistenFn | null = null;
+  let unlistenCommand: UnlistenFn | null = null;
+  let unlistenDragDrop: UnlistenFn | null = null;
 
   onMount(async () => {
     unlistenLog = await onLog(async (line) => {
@@ -89,12 +96,33 @@
       const job = queue.find(j => j.id === runningJobId);
       if (job) job.progress = p;
     });
+    unlistenCommand = await onCommand((command) => {
+      const job = queue.find(j => j.id === runningJobId);
+      if (job) job.command = command;
+    });
+
+    const appWindow = getCurrentWebviewWindow();
+    unlistenDragDrop = await appWindow.onDragDropEvent((event) => {
+      const payload = event.payload as { type: string; paths?: string[] };
+      if (payload.type === "enter" || payload.type === "over") {
+        dropActive = true;
+      } else if (payload.type === "leave") {
+        dropActive = false;
+      } else if (payload.type === "drop") {
+        dropActive = false;
+        if (payload.paths && payload.paths.length > 0) {
+          void importDroppedPaths(payload.paths);
+        }
+      }
+    });
   });
 
   onDestroy(() => {
     unlistenLog?.();
     unlistenDone?.();
     unlistenProgress?.();
+    unlistenCommand?.();
+    unlistenDragDrop?.();
   });
 
   // ── Auto-update output extension when container changes ───────────────────────
@@ -113,12 +141,33 @@
 
   // ── Build operation ───────────────────────────────────────────────────────────
 
-  function buildOperation(): FfmpegOperation {
+  function splitPath(path: string): { dir: string; base: string; ext: string } {
+    const slash = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+    const dir = slash >= 0 ? path.slice(0, slash + 1) : "";
+    const name = slash >= 0 ? path.slice(slash + 1) : path;
+    const dot = name.lastIndexOf(".");
+    if (dot <= 0) return { dir, base: name, ext: "" };
+    return { dir, base: name.slice(0, dot), ext: name.slice(dot + 1) };
+  }
+
+  function inferOutputPath(tab: Tab, inputPath: string): string {
+    const { dir, base } = splitPath(inputPath);
+    const ext = tab === "convert"
+      ? convertContainer
+      : tab === "remux"
+      ? "mp4"
+      : "mp4";
+    return `${dir}${base}_out.${ext}`;
+  }
+
+  function buildOperation(inputOverride?: string, forceAutoOutput = false): FfmpegOperation {
     if (activeTab === "convert") {
+      const input = inputOverride ?? convertInput;
+      const output = forceAutoOutput || !convertOutput ? inferOutputPath("convert", input) : convertOutput;
       return {
         type: "convert",
-        input: convertInput,
-        output: convertOutput,
+        input,
+        output,
         container: convertContainer,
         quality_mode: convertQualityMode,
         crf: convertQualityMode === "crf" ? convertCrf : null,
@@ -127,25 +176,37 @@
         fps: convertFps === "keep" ? null : parseInt(convertFps),
       };
     } else if (activeTab === "trim") {
-      return { type: "trim", input: trimInput, output: trimOutput, start: trimStart, duration: trimDuration };
+      const input = inputOverride ?? trimInput;
+      const output = forceAutoOutput || !trimOutput ? inferOutputPath("trim", input) : trimOutput;
+      return { type: "trim", input, output, start: trimStart, duration: trimDuration };
     } else if (activeTab === "compress") {
-      return { type: "compress", input: compressInput, output: compressOutput, crf: compressCrf };
+      const input = inputOverride ?? compressInput;
+      const output = forceAutoOutput || !compressOutput ? inferOutputPath("compress", input) : compressOutput;
+      return { type: "compress", input, output, crf: compressCrf };
     } else {
-      return { type: "remux", input: remuxInput, output: remuxOutput };
+      const input = inputOverride ?? remuxInput;
+      const output = forceAutoOutput || !remuxOutput ? inferOutputPath("remux", input) : remuxOutput;
+      return { type: "remux", input, output };
     }
   }
 
   // ── Queue operations ──────────────────────────────────────────────────────────
 
-  function addToQueue() {
-    const job: QueueJob = {
+  function createQueueJob(operation: FfmpegOperation, durationSecs = 0): QueueJob {
+    return {
       id: crypto.randomUUID(),
-      operation: buildOperation(),
+      operation,
       status: "pending",
       logs: [],
       progress: null,
-      durationSecs: mediaInfo?.duration_secs ?? 0,
+      durationSecs,
+      command: "",
+      cleanupPartial: cancelCleanupEnabled,
     };
+  }
+
+  function addToQueue() {
+    const job = createQueueJob(buildOperation(), mediaInfo?.duration_secs ?? 0);
     queue.push(job);
     if (!selectedJobId) selectedJobId = job.id;
   }
@@ -156,9 +217,10 @@
     job.status = "running";
     job.logs = [];
     job.progress = null;
+    job.command = "";
     currentProgress = null;
     try {
-      await runFfmpeg(job.operation);
+      await runFfmpeg(job.operation, { cleanupPartial: job.cleanupPartial });
       if (job.status === "running") job.status = "done";
     } catch (e) {
       job.logs.push(`[error] ${e}`);
@@ -190,7 +252,7 @@
 
   function retryJob(id: string) {
     const job = queue.find(j => j.id === id);
-    if (job) { job.status = "pending"; job.logs = []; job.progress = null; }
+    if (job) { job.status = "pending"; job.logs = []; job.progress = null; job.command = ""; }
   }
 
   function removeJob(id: string) {
@@ -203,6 +265,16 @@
     if (queueRunning) return;
     queue.splice(0, queue.length);
     selectedJobId = null;
+  }
+
+  function moveJob(id: string, dir: -1 | 1) {
+    if (queueRunning) return;
+    const idx = queue.findIndex((j) => j.id === id);
+    if (idx < 0) return;
+    const to = idx + dir;
+    if (to < 0 || to >= queue.length) return;
+    const [job] = queue.splice(idx, 1);
+    queue.splice(to, 0, job);
   }
 
   function jobLabel(job: QueueJob): string {
@@ -229,6 +301,44 @@
   async function pickOutput(setter: (v: string) => void) {
     const path = await save({ filters: VIDEO_FILTERS });
     if (path) setter(path);
+  }
+
+  function applySingleImport(path: string) {
+    if (activeTab === "convert") {
+      convertInput = path;
+      if (!convertOutput) convertOutput = inferOutputPath("convert", path);
+    } else if (activeTab === "trim") {
+      trimInput = path;
+      if (!trimOutput) trimOutput = inferOutputPath("trim", path);
+    } else if (activeTab === "compress") {
+      compressInput = path;
+      if (!compressOutput) compressOutput = inferOutputPath("compress", path);
+    } else {
+      remuxInput = path;
+      if (!remuxOutput) remuxOutput = inferOutputPath("remux", path);
+    }
+    void probeFile(path);
+  }
+
+  async function importDroppedPaths(rawPaths: string[]) {
+    try {
+      const mediaPaths = await expandMediaInputs(rawPaths);
+      if (mediaPaths.length === 0) return;
+      if (mediaPaths.length === 1) {
+        applySingleImport(mediaPaths[0]);
+        return;
+      }
+      for (const path of mediaPaths) {
+        queue.push(createQueueJob(buildOperation(path, true)));
+      }
+      if (!selectedJobId) selectedJobId = queue[0]?.id ?? null;
+    } catch {}
+  }
+
+  async function copyCommand(command: string) {
+    try {
+      await navigator.clipboard.writeText(command);
+    } catch {}
   }
 
   // ── Derived ───────────────────────────────────────────────────────────────────
@@ -258,6 +368,11 @@
   const progressPct = $derived(
     encodeDuration > 0 && currentProgress?.time_secs != null
       ? Math.min(100, (currentProgress.time_secs / encodeDuration) * 100)
+      : null
+  );
+  const etaSecs = $derived(
+    encodeDuration > 0 && currentProgress?.time_secs != null && currentProgress.speed != null && currentProgress.speed > 0
+      ? Math.max(0, (encodeDuration - currentProgress.time_secs) / currentProgress.speed)
       : null
   );
 
@@ -292,7 +407,7 @@
   }
 </script>
 
-<div class="h-screen flex flex-col overflow-hidden bg-background text-foreground font-mono">
+<div class="relative h-screen flex flex-col overflow-hidden bg-background text-foreground font-mono">
 
   <!-- Header -->
   <header class="h-12 flex items-center justify-between px-6 border-b border-border flex-shrink-0">
@@ -620,7 +735,11 @@
         <span class="text-[9px] font-semibold tracking-[0.2em] uppercase text-muted-foreground">
           Queue{queue.length > 0 ? ` · ${queue.length}` : ""}
         </span>
-        <div class="flex items-center gap-2">
+        <div class="flex items-center gap-4">
+          <label class="flex items-center gap-1.5 text-[8px] tracking-[0.12em] uppercase text-muted-foreground cursor-pointer select-none">
+            <input type="checkbox" bind:checked={cancelCleanupEnabled} class="accent-current w-3 h-3" />
+            Cleanup partial on cancel
+          </label>
           {#if isRunning}
             <button
               onclick={stopQueue}
@@ -671,6 +790,20 @@
               <span class="text-[8px] uppercase tracking-wider text-muted-foreground w-14 flex-shrink-0">{job.operation.type}</span>
               <!-- Filename -->
               <span class="flex-1 text-[11px] text-foreground truncate">{jobLabel(job)}</span>
+              {#if !queueRunning}
+                <button
+                  type="button"
+                  aria-label="Move job up"
+                  onclick={(e) => { e.stopPropagation(); moveJob(job.id, -1); }}
+                  class="text-[9px] text-muted-foreground hover:text-foreground transition-colors cursor-pointer border-0 bg-transparent flex-shrink-0"
+                >↑</button>
+                <button
+                  type="button"
+                  aria-label="Move job down"
+                  onclick={(e) => { e.stopPropagation(); moveJob(job.id, 1); }}
+                  class="text-[9px] text-muted-foreground hover:text-foreground transition-colors cursor-pointer border-0 bg-transparent flex-shrink-0"
+                >↓</button>
+              {/if}
               <!-- Action -->
               {#if job.status === "running"}
                 <span class="spinner flex-shrink-0"></span>
@@ -723,6 +856,9 @@
             {#if currentProgress.speed != null}
               <span class="text-muted-foreground">{currentProgress.speed.toFixed(2)}x</span>
             {/if}
+            {#if etaSecs != null}
+              <span class="text-muted-foreground">ETA {fmtDuration(etaSecs)}</span>
+            {/if}
             {#if currentProgress.fps != null && currentProgress.fps > 0}
               <span class="text-muted-foreground">{Math.round(currentProgress.fps)} fps</span>
             {/if}
@@ -744,6 +880,17 @@
         <span class="text-[9px] text-muted-foreground tabular-nums flex-shrink-0 ml-3">{selectedJob?.logs.length ?? 0} lines</span>
       </div>
 
+      {#if selectedJob?.command}
+        <div class="px-5 py-2 border-b border-border flex items-center gap-3">
+          <code class="flex-1 text-[9px] text-muted-foreground truncate">{selectedJob.command}</code>
+          <button
+            type="button"
+            onclick={() => copyCommand(selectedJob.command)}
+            class="text-[8px] font-semibold tracking-[0.15em] uppercase text-muted-foreground hover:text-foreground transition-colors cursor-pointer border-0 bg-transparent"
+          >Copy</button>
+        </div>
+      {/if}
+
       <!-- Log body -->
       <div class="flex-1 overflow-y-auto py-3" bind:this={logPanel}>
         {#if !selectedJob || selectedJob.logs.length === 0}
@@ -760,6 +907,12 @@
     </section>
 
   </div>
+
+  {#if dropActive}
+    <div class="absolute inset-0 z-20 pointer-events-none flex items-center justify-center bg-background/80 border-2 border-dashed border-foreground">
+      <p class="text-[11px] tracking-[0.2em] uppercase text-foreground">Drop files or folders to import</p>
+    </div>
+  {/if}
 </div>
 
 <style>
