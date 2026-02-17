@@ -25,6 +25,7 @@ pub enum FfmpegOperation {
     Convert { input: String, output: String },
     Trim { input: String, output: String, start: String, duration: String },
     Compress { input: String, output: String, crf: u32 },
+    Remux { input: String, output: String },
 }
 
 pub fn build_args(op: &FfmpegOperation) -> Vec<String> {
@@ -47,6 +48,9 @@ pub fn build_args(op: &FfmpegOperation) -> Vec<String> {
                 "-crf".into(), crf.to_string(),
                 output.clone(),
             ]
+        }
+        FfmpegOperation::Remux { input, output } => {
+            vec!["-y".into(), "-i".into(), input.clone(), "-c".into(), "copy".into(), output.clone()]
         }
     }
 }

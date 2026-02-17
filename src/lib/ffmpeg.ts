@@ -4,7 +4,8 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 export type FfmpegOperation =
   | { type: "convert"; input: string; output: string }
   | { type: "trim"; input: string; output: string; start: string; duration: string }
-  | { type: "compress"; input: string; output: string; crf: number };
+  | { type: "compress"; input: string; output: string; crf: number }
+  | { type: "remux"; input: string; output: string };
 
 export interface StreamInfo {
   index: number;

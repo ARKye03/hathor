@@ -8,7 +8,7 @@
   import type { UnlistenFn } from "@tauri-apps/api/event";
   import { open, save } from "@tauri-apps/plugin-dialog";
 
-  type Tab = "convert" | "trim" | "compress";
+  type Tab = "convert" | "trim" | "compress" | "remux";
   type Status = "idle" | "running" | "done" | "error" | "cancelled";
 
   let activeTab = $state<Tab>("convert");
@@ -25,6 +25,8 @@
   let compressInput = $state("");
   let compressOutput = $state("");
   let compressCrf = $state(23);
+  let remuxInput = $state("");
+  let remuxOutput = $state("");
 
   // Probing + progress state
   let mediaInfo = $state<MediaInfo | null>(null);
@@ -61,8 +63,10 @@
       return { type: "convert", input: convertInput, output: convertOutput };
     } else if (activeTab === "trim") {
       return { type: "trim", input: trimInput, output: trimOutput, start: trimStart, duration: trimDuration };
-    } else {
+    } else if (activeTab === "compress") {
       return { type: "compress", input: compressInput, output: compressOutput, crf: compressCrf };
+    } else {
+      return { type: "remux", input: remuxInput, output: remuxOutput };
     }
   }
 
@@ -204,14 +208,14 @@
 
       <!-- Tabs -->
       <div class="flex border-b border-border flex-shrink-0">
-        {#each (["convert", "trim", "compress"] as Tab[]) as tab, i}
+        {#each (["convert", "trim", "compress", "remux"] as Tab[]) as tab, i}
           <button
             onclick={() => { activeTab = tab; mediaInfo = null; }}
             class="flex-1 py-3 text-[9px] font-semibold tracking-[0.18em] uppercase cursor-pointer bg-transparent border-0 border-r border-border transition-colors"
             class:text-foreground={activeTab === tab}
             class:tab-active={activeTab === tab}
             class:text-muted-foreground={activeTab !== tab}
-            class:border-r-0={i === 2}
+            class:border-r-0={i === 3}
           >
             {tab}
           </button>
@@ -277,7 +281,7 @@
             </label>
           </div>
 
-        {:else}
+        {:else if activeTab === "compress"}
           <label class="flex flex-col gap-2">
             <span class="text-[9px] font-semibold tracking-[0.2em] uppercase text-muted-foreground">Input</span>
             <div class="flex">
@@ -309,6 +313,34 @@
               <span>51 · Worst</span>
             </div>
           </div>
+        {:else}
+          <!-- Remux -->
+          <div class="flex flex-col gap-1.5 pb-1">
+            <p class="text-[9px] text-muted-foreground tracking-wider">Copies all streams without re-encoding. Instant, lossless.</p>
+            <div class="flex items-center gap-1.5 text-[9px] font-semibold text-foreground tracking-wider uppercase">
+              <span class="inline-block w-1.5 h-1.5 bg-foreground"></span>Fast · No quality loss
+            </div>
+          </div>
+          <label class="flex flex-col gap-2">
+            <span class="text-[9px] font-semibold tracking-[0.2em] uppercase text-muted-foreground">Input</span>
+            <div class="flex">
+              <input type="text" spellcheck="false" bind:value={remuxInput} placeholder="/path/to/input.mkv"
+                class="bg-input border border-border text-foreground font-mono text-[11px] px-3 py-2 flex-1 min-w-0 outline-none transition-colors placeholder:text-muted-foreground focus:border-foreground" />
+              <button type="button" onclick={() => pickInput((v) => remuxInput = v)} aria-label="Browse" class="browse-btn">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>
+              </button>
+            </div>
+          </label>
+          <label class="flex flex-col gap-2">
+            <span class="text-[9px] font-semibold tracking-[0.2em] uppercase text-muted-foreground">Output</span>
+            <div class="flex">
+              <input type="text" spellcheck="false" bind:value={remuxOutput} placeholder="/path/to/output.mp4"
+                class="bg-input border border-border text-foreground font-mono text-[11px] px-3 py-2 flex-1 min-w-0 outline-none transition-colors placeholder:text-muted-foreground focus:border-foreground" />
+              <button type="button" onclick={() => pickOutput((v) => remuxOutput = v)} aria-label="Browse" class="browse-btn">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>
+              </button>
+            </div>
+          </label>
         {/if}
 
         <!-- Media info strip -->
