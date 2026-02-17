@@ -65,3 +65,7 @@
       class="bg-input border border-border text-foreground font-mono text-[11px] px-3 py-2 w-full outline-none transition-colors placeholder:text-muted-foreground focus:border-foreground" />
   </label>
 </div>
+
+{#if trimMode === "accurate"}
+  <p class="text-[9px] text-destructive">This cut will re-encode.</p>
+{/if}

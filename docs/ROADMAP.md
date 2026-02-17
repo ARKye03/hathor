@@ -38,11 +38,12 @@ This roadmap now tracks implementation status directly.
 
 - [x] Crop / Pad / Rotate
   - [x] Freeform crop (x/y/width/height)
+  - [x] Crop presets (16:9, 1:1, center-crop shortcuts)
   - [x] Letterbox/pillarbox-style padding (target canvas + color)
   - [x] Rotate 90/180/270, flip
 
 - [x] Merge / Concatenate
-  - [x] Concat demuxer flow
+  - [x] Concatenate flow for matching clips (concat demuxer + stream copy)
   - [x] Source mismatch warnings
 
 ## Audio Features
@@ -96,7 +97,7 @@ This roadmap now tracks implementation status directly.
 
 - [ ] Smart warnings
   - [ ] Remux possible suggestion
-  - [ ] "This cut will re-encode" warning
+  - [x] "This cut will re-encode" warning
   - [x] Codec/container compatibility warning
 
 - [ ] History
@@ -106,6 +107,6 @@ This roadmap now tracks implementation status directly.
 
 ## Next Implementation Targets
 
-1. Add crop presets (16:9, 1:1, center-crop shortcuts).
-2. Add concatenate flow for matching clips.
-3. Add "This cut will re-encode" warning.
+1. Add remux possible suggestion.
+2. Add output naming templates.
+3. Add extract audio (MP3 / AAC / Opus / WAV).

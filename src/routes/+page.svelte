@@ -260,6 +260,72 @@
     return null;
   }
 
+  function mergeMismatchWarning(infos: (MediaInfo | null)[], inputs: string[]): string | null {
+    if (inputs.length < 2 || infos.length !== inputs.length) return null;
+    const first = infos[0];
+    if (!first) return "Could not read metadata for the first file.";
+    const v0 = first.streams.find((s) => s.codec_type === "video");
+    const a0 = first.streams.find((s) => s.codec_type === "audio");
+    for (let i = 1; i < infos.length; i += 1) {
+      const cur = infos[i];
+      if (!cur) return "Could not read metadata for one or more files.";
+      const v = cur.streams.find((s) => s.codec_type === "video");
+      const a = cur.streams.find((s) => s.codec_type === "audio");
+      if (!!v0 !== !!v || !!a0 !== !!a) return "Stream layout mismatch detected (video/audio presence differs).";
+      if (v0 && v && (v.codec_name !== v0.codec_name || v.width !== v0.width || v.height !== v0.height)) {
+        return "Video codec or resolution mismatch detected; concat copy may fail.";
+      }
+      if (a0 && a && (a.codec_name !== a0.codec_name || a.channels !== a0.channels || a.sample_rate !== a0.sample_rate)) {
+        return "Audio stream mismatch detected; concat copy may fail.";
+      }
+    }
+    return null;
+  }
+
+  function cropVideoStream(info: MediaInfo | null) {
+    return info?.streams.find((s) => s.codec_type === "video" && s.width != null && s.height != null) ?? null;
+  }
+
+  function applyCenteredAspectCrop(aspectW: number, aspectH: number) {
+    const stream = cropVideoStream(mediaInfo);
+    if (!stream || !stream.width || !stream.height) return;
+
+    const srcW = stream.width;
+    const srcH = stream.height;
+    const target = aspectW / aspectH;
+    const src = srcW / srcH;
+    let width = srcW;
+    let height = srcH;
+
+    if (src > target) {
+      width = Math.floor(srcH * target);
+      width -= width % 2;
+    } else {
+      height = Math.floor(srcW / target);
+      height -= height % 2;
+    }
+
+    if (width < 2 || height < 2) return;
+    transformCropEnabled = true;
+    transformCropWidth = width;
+    transformCropHeight = height;
+    transformCropX = Math.max(0, Math.floor((srcW - width) / 2));
+    transformCropY = Math.max(0, Math.floor((srcH - height) / 2));
+  }
+
+  function centerCurrentCrop() {
+    const stream = cropVideoStream(mediaInfo);
+    if (!stream || !stream.width || !stream.height) return;
+    const srcW = stream.width;
+    const srcH = stream.height;
+    const width = Math.min(Math.max(2, transformCropWidth), srcW);
+    const height = Math.min(Math.max(2, transformCropHeight), srcH);
+    transformCropWidth = width;
+    transformCropHeight = height;
+    transformCropX = Math.max(0, Math.floor((srcW - width) / 2));
+    transformCropY = Math.max(0, Math.floor((srcH - height) / 2));
+  }
+
   function inferOutputPath(tab: Tab, inputPath: string): string {
     const { dir, base, ext } = splitPath(inputPath);
     const outDir = defaultOutputDir || dir;
@@ -328,6 +394,7 @@
   }
 
   function addToQueue() {
+    if (activeTab === "merge" && mergeInputs.length > 1 && mergeConcatMismatchWarning) return;
     const job = createQueueJob(buildOperation(), mediaInfo?.duration_secs ?? 0);
     queue.push(job);
     if (!selectedJobId) selectedJobId = job.id;
@@ -519,6 +586,12 @@
   const remuxContainerWarning = $derived(
     activeTab === "remux" ? remuxCompatibilityWarning(mediaInfo, remuxOutput) : null
   );
+  const mergeConcatMismatchWarning = $derived(
+    activeTab === "merge" ? mergeMismatchWarning(mergeInfos, mergeInputs) : null
+  );
+  const mergeConcatReady = $derived(
+    activeTab === "merge" && mergeInputs.length >= 2 && mergeInfos.length === mergeInputs.length && !mergeConcatMismatchWarning
+  );
 
   const queueStatus = $derived<QueueStatus>(
     queueRunning ? "running" :
@@ -650,6 +723,11 @@
             bind:padColor={transformPadColor}
             bind:rotate={transformRotate}
             bind:flip={transformFlip}
+            sourceWidth={cropVideoStream(mediaInfo)?.width ?? null}
+            sourceHeight={cropVideoStream(mediaInfo)?.height ?? null}
+            oncrop169={() => applyCenteredAspectCrop(16, 9)}
+            oncrop11={() => applyCenteredAspectCrop(1, 1)}
+            oncentercrop={centerCurrentCrop}
             onpickinput={() => pickInput((v) => transformInput = v)}
             onpickoutput={() => pickOutput((v) => transformOutput = v)}
           />
@@ -658,6 +736,8 @@
             bind:inputs={mergeInputs}
             bind:output={mergeOutput}
             bind:infos={mergeInfos}
+            mergeMismatchWarning={mergeConcatMismatchWarning}
+            mergeReady={mergeConcatReady}
             onaddfiles={pickMergeInputs}
             onpickoutput={() => pickOutput((v) => mergeOutput = v)}
             onremoveinput={removeMergeInput}
@@ -697,7 +777,8 @@
         {:else}
           <button
             onclick={addToQueue}
-            class="primary-cta bg-foreground text-background text-[10px] tracking-[0.25em] uppercase font-semibold py-3 w-full border-0 cursor-pointer hover:opacity-90 transition-opacity flex items-center justify-center gap-2"
+            disabled={activeTab === "merge" && mergeInputs.length > 1 && !!mergeConcatMismatchWarning}
+            class="primary-cta bg-foreground text-background text-[10px] tracking-[0.25em] uppercase font-semibold py-3 w-full border-0 cursor-pointer hover:opacity-90 transition-opacity flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
           >+ Add to Queue</button>
         {/if}
       </div>

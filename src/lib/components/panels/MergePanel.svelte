@@ -6,6 +6,8 @@
     inputs?: string[];
     output?: string;
     infos?: (MediaInfo | null)[];
+    mergeMismatchWarning?: string | null;
+    mergeReady?: boolean;
     onaddfiles: () => void;
     onpickoutput: () => void;
     onremoveinput: (idx: number) => void;
@@ -16,34 +18,14 @@
     inputs = $bindable<string[]>([]),
     output = $bindable(""),
     infos = $bindable<(MediaInfo | null)[]>([]),
+    mergeMismatchWarning = null,
+    mergeReady = false,
     onaddfiles,
     onpickoutput,
     onremoveinput,
     onmoveinput,
     onclearinputs,
   }: Props = $props();
-
-  const mergeMismatchWarning = $derived((() => {
-    if (inputs.length < 2 || infos.length !== inputs.length) return null;
-    const first = infos[0];
-    if (!first) return "Could not read metadata for the first file.";
-    const v0 = first.streams.find((s) => s.codec_type === "video");
-    const a0 = first.streams.find((s) => s.codec_type === "audio");
-    for (let i = 1; i < infos.length; i += 1) {
-      const cur = infos[i];
-      if (!cur) return "Could not read metadata for one or more files.";
-      const v = cur.streams.find((s) => s.codec_type === "video");
-      const a = cur.streams.find((s) => s.codec_type === "audio");
-      if (!!v0 !== !!v || !!a0 !== !!a) return "Stream layout mismatch detected (video/audio presence differs).";
-      if (v0 && v && (v.codec_name !== v0.codec_name || v.width !== v0.width || v.height !== v0.height)) {
-        return "Video codec or resolution mismatch detected; concat copy may fail.";
-      }
-      if (a0 && a && (a.codec_name !== a0.codec_name || a.channels !== a0.channels || a.sample_rate !== a0.sample_rate)) {
-        return "Audio stream mismatch detected; concat copy may fail.";
-      }
-    }
-    return null;
-  })());
 </script>
 
 <div class="flex flex-col gap-2">
@@ -79,6 +61,10 @@
 </label>
 
 <p class="text-[9px] text-muted-foreground">Uses concat demuxer with stream copy for matching files.</p>
+
+{#if mergeReady}
+  <p class="text-[9px] text-foreground">Matching clips detected. Fast concatenate flow is ready.</p>
+{/if}
 
 {#if mergeMismatchWarning}
   <p class="text-[9px] text-destructive">{mergeMismatchWarning}</p>

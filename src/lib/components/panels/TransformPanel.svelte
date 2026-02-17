@@ -16,6 +16,11 @@
     padColor?: string;
     rotate?: Rotate;
     flip?: Flip;
+    sourceWidth?: number | null;
+    sourceHeight?: number | null;
+    oncrop169: () => void;
+    oncrop11: () => void;
+    oncentercrop: () => void;
     onpickinput: () => void;
     onpickoutput: () => void;
   }
@@ -33,6 +38,11 @@
     padColor = $bindable("#000000"),
     rotate = $bindable<Rotate>("keep"),
     flip = $bindable<Flip>("none"),
+    sourceWidth = null,
+    sourceHeight = null,
+    oncrop169,
+    oncrop11,
+    oncentercrop,
     onpickinput,
     onpickoutput,
   }: Props = $props();
@@ -54,6 +64,20 @@
     Crop
   </label>
   {#if cropEnabled}
+    <div class="flex gap-2">
+      <button type="button" onclick={oncrop169}
+        class="bg-input border border-border text-foreground text-[9px] tracking-[0.12em] uppercase font-semibold px-2.5 py-1.5 cursor-pointer hover:bg-muted transition-colors"
+      >16:9</button>
+      <button type="button" onclick={oncrop11}
+        class="bg-input border border-border text-foreground text-[9px] tracking-[0.12em] uppercase font-semibold px-2.5 py-1.5 cursor-pointer hover:bg-muted transition-colors"
+      >1:1</button>
+      <button type="button" onclick={oncentercrop}
+        class="bg-transparent border border-border text-muted-foreground text-[9px] tracking-[0.12em] uppercase font-semibold px-2.5 py-1.5 cursor-pointer hover:text-foreground transition-colors"
+      >Center</button>
+    </div>
+    {#if sourceWidth && sourceHeight}
+      <p class="text-[9px] text-muted-foreground">Source: {sourceWidth}×{sourceHeight}</p>
+    {/if}
     <div class="grid grid-cols-2 gap-2">
       <input type="number" min="0" bind:value={cropX} placeholder="x"
         class="bg-input border border-border text-foreground font-mono text-[11px] px-2 py-1.5 outline-none focus:border-foreground" />
