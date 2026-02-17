@@ -3,6 +3,19 @@
   import { runFfmpeg, onLog, onDone, type FfmpegOperation } from "$lib/ffmpeg";
   import { theme, type ThemePref } from "$lib/theme.svelte";
   import type { UnlistenFn } from "@tauri-apps/api/event";
+  import { open, save } from "@tauri-apps/plugin-dialog";
+
+  const VIDEO_FILTERS = [{ name: "Video", extensions: ["mp4", "mkv", "avi", "mov", "webm", "m4v", "flv", "ts", "wmv"] }];
+
+  async function pickInput(setter: (v: string) => void) {
+    const path = await open({ multiple: false, filters: VIDEO_FILTERS });
+    if (typeof path === "string") setter(path);
+  }
+
+  async function pickOutput(setter: (v: string) => void) {
+    const path = await save({ filters: VIDEO_FILTERS });
+    if (path) setter(path);
+  }
 
   type Tab = "convert" | "trim" | "compress";
   type Status = "idle" | "running" | "done" | "error";
@@ -141,81 +154,85 @@
         {#if activeTab === "convert"}
           <label class="flex flex-col gap-2">
             <span class="text-[9px] font-semibold tracking-[0.2em] uppercase text-muted-foreground">Input</span>
-            <input
-              type="text" spellcheck="false"
-              bind:value={convertInput}
-              placeholder="/path/to/input.mkv"
-              class="bg-input border border-border text-foreground font-mono text-[11px] px-3 py-2 w-full outline-none transition-colors placeholder:text-muted-foreground focus:border-foreground"
-            />
+            <div class="flex">
+              <input type="text" spellcheck="false" bind:value={convertInput} placeholder="/path/to/input.mkv"
+                class="bg-input border border-border text-foreground font-mono text-[11px] px-3 py-2 flex-1 min-w-0 outline-none transition-colors placeholder:text-muted-foreground focus:border-foreground" />
+              <button type="button" onclick={() => pickInput((v) => convertInput = v)}
+                class="browse-btn bg-secondary text-secondary-foreground border border-l-0 border-border px-3 cursor-pointer hover:bg-muted transition-colors flex items-center">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>
+              </button>
+            </div>
           </label>
           <label class="flex flex-col gap-2">
             <span class="text-[9px] font-semibold tracking-[0.2em] uppercase text-muted-foreground">Output</span>
-            <input
-              type="text" spellcheck="false"
-              bind:value={convertOutput}
-              placeholder="/path/to/output.mp4"
-              class="bg-input border border-border text-foreground font-mono text-[11px] px-3 py-2 w-full outline-none transition-colors placeholder:text-muted-foreground focus:border-foreground"
-            />
+            <div class="flex">
+              <input type="text" spellcheck="false" bind:value={convertOutput} placeholder="/path/to/output.mp4"
+                class="bg-input border border-border text-foreground font-mono text-[11px] px-3 py-2 flex-1 min-w-0 outline-none transition-colors placeholder:text-muted-foreground focus:border-foreground" />
+              <button type="button" onclick={() => pickOutput((v) => convertOutput = v)}
+                class="browse-btn bg-secondary text-secondary-foreground border border-l-0 border-border px-3 cursor-pointer hover:bg-muted transition-colors flex items-center">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>
+              </button>
+            </div>
           </label>
 
         {:else if activeTab === "trim"}
           <label class="flex flex-col gap-2">
             <span class="text-[9px] font-semibold tracking-[0.2em] uppercase text-muted-foreground">Input</span>
-            <input
-              type="text" spellcheck="false"
-              bind:value={trimInput}
-              placeholder="/path/to/input.mp4"
-              class="bg-input border border-border text-foreground font-mono text-[11px] px-3 py-2 w-full outline-none transition-colors placeholder:text-muted-foreground focus:border-foreground"
-            />
+            <div class="flex">
+              <input type="text" spellcheck="false" bind:value={trimInput} placeholder="/path/to/input.mp4"
+                class="bg-input border border-border text-foreground font-mono text-[11px] px-3 py-2 flex-1 min-w-0 outline-none transition-colors placeholder:text-muted-foreground focus:border-foreground" />
+              <button type="button" onclick={() => pickInput((v) => trimInput = v)}
+                class="browse-btn bg-secondary text-secondary-foreground border border-l-0 border-border px-3 cursor-pointer hover:bg-muted transition-colors flex items-center">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>
+              </button>
+            </div>
           </label>
           <label class="flex flex-col gap-2">
             <span class="text-[9px] font-semibold tracking-[0.2em] uppercase text-muted-foreground">Output</span>
-            <input
-              type="text" spellcheck="false"
-              bind:value={trimOutput}
-              placeholder="/path/to/output.mp4"
-              class="bg-input border border-border text-foreground font-mono text-[11px] px-3 py-2 w-full outline-none transition-colors placeholder:text-muted-foreground focus:border-foreground"
-            />
+            <div class="flex">
+              <input type="text" spellcheck="false" bind:value={trimOutput} placeholder="/path/to/output.mp4"
+                class="bg-input border border-border text-foreground font-mono text-[11px] px-3 py-2 flex-1 min-w-0 outline-none transition-colors placeholder:text-muted-foreground focus:border-foreground" />
+              <button type="button" onclick={() => pickOutput((v) => trimOutput = v)}
+                class="browse-btn bg-secondary text-secondary-foreground border border-l-0 border-border px-3 cursor-pointer hover:bg-muted transition-colors flex items-center">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>
+              </button>
+            </div>
           </label>
           <div class="grid grid-cols-2 gap-3">
             <label class="flex flex-col gap-2">
               <span class="text-[9px] font-semibold tracking-[0.2em] uppercase text-muted-foreground">Start</span>
-              <input
-                type="text" spellcheck="false"
-                bind:value={trimStart}
-                placeholder="00:00:10"
-                class="bg-input border border-border text-foreground font-mono text-[11px] px-3 py-2 w-full outline-none transition-colors placeholder:text-muted-foreground focus:border-foreground"
-              />
+              <input type="text" spellcheck="false" bind:value={trimStart} placeholder="00:00:10"
+                class="bg-input border border-border text-foreground font-mono text-[11px] px-3 py-2 w-full outline-none transition-colors placeholder:text-muted-foreground focus:border-foreground" />
             </label>
             <label class="flex flex-col gap-2">
               <span class="text-[9px] font-semibold tracking-[0.2em] uppercase text-muted-foreground">Duration</span>
-              <input
-                type="text" spellcheck="false"
-                bind:value={trimDuration}
-                placeholder="00:00:30"
-                class="bg-input border border-border text-foreground font-mono text-[11px] px-3 py-2 w-full outline-none transition-colors placeholder:text-muted-foreground focus:border-foreground"
-              />
+              <input type="text" spellcheck="false" bind:value={trimDuration} placeholder="00:00:30"
+                class="bg-input border border-border text-foreground font-mono text-[11px] px-3 py-2 w-full outline-none transition-colors placeholder:text-muted-foreground focus:border-foreground" />
             </label>
           </div>
 
         {:else}
           <label class="flex flex-col gap-2">
             <span class="text-[9px] font-semibold tracking-[0.2em] uppercase text-muted-foreground">Input</span>
-            <input
-              type="text" spellcheck="false"
-              bind:value={compressInput}
-              placeholder="/path/to/input.mp4"
-              class="bg-input border border-border text-foreground font-mono text-[11px] px-3 py-2 w-full outline-none transition-colors placeholder:text-muted-foreground focus:border-foreground"
-            />
+            <div class="flex">
+              <input type="text" spellcheck="false" bind:value={compressInput} placeholder="/path/to/input.mp4"
+                class="bg-input border border-border text-foreground font-mono text-[11px] px-3 py-2 flex-1 min-w-0 outline-none transition-colors placeholder:text-muted-foreground focus:border-foreground" />
+              <button type="button" onclick={() => pickInput((v) => compressInput = v)}
+                class="browse-btn bg-secondary text-secondary-foreground border border-l-0 border-border px-3 cursor-pointer hover:bg-muted transition-colors flex items-center">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>
+              </button>
+            </div>
           </label>
           <label class="flex flex-col gap-2">
             <span class="text-[9px] font-semibold tracking-[0.2em] uppercase text-muted-foreground">Output</span>
-            <input
-              type="text" spellcheck="false"
-              bind:value={compressOutput}
-              placeholder="/path/to/output.mp4"
-              class="bg-input border border-border text-foreground font-mono text-[11px] px-3 py-2 w-full outline-none transition-colors placeholder:text-muted-foreground focus:border-foreground"
-            />
+            <div class="flex">
+              <input type="text" spellcheck="false" bind:value={compressOutput} placeholder="/path/to/output.mp4"
+                class="bg-input border border-border text-foreground font-mono text-[11px] px-3 py-2 flex-1 min-w-0 outline-none transition-colors placeholder:text-muted-foreground focus:border-foreground" />
+              <button type="button" onclick={() => pickOutput((v) => compressOutput = v)}
+                class="browse-btn bg-secondary text-secondary-foreground border border-l-0 border-border px-3 cursor-pointer hover:bg-muted transition-colors flex items-center">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>
+              </button>
+            </div>
           </label>
           <div class="flex flex-col gap-3">
             <div class="flex items-baseline justify-between">
@@ -277,6 +294,11 @@
 </div>
 
 <style>
+  /* Browse button — aligns exactly with adjacent input height */
+  .browse-btn {
+    height: 100%;
+  }
+
   /* Active tab: 2px bottom indicator */
   .tab-active {
     box-shadow: inset 0 -2px 0 var(--foreground);
