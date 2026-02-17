@@ -22,7 +22,16 @@ impl FfmpegState {
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum FfmpegOperation {
-    Convert { input: String, output: String },
+    Convert {
+        input: String,
+        output: String,
+        container: String,    // "mp4" | "mkv" | "mov" | "webm"
+        quality_mode: String, // "crf" | "bitrate"
+        crf: Option<u32>,
+        bitrate: Option<String>,  // e.g. "2000k"
+        resolution: Option<String>, // "1080p" | "720p" | "480p" | null = keep
+        fps: Option<u32>,           // null = keep
+    },
     Trim { input: String, output: String, start: String, duration: String },
     Compress { input: String, output: String, crf: u32 },
     Remux { input: String, output: String },
@@ -30,8 +39,46 @@ pub enum FfmpegOperation {
 
 pub fn build_args(op: &FfmpegOperation) -> Vec<String> {
     match op {
-        FfmpegOperation::Convert { input, output } => {
-            vec!["-y".into(), "-i".into(), input.clone(), output.clone()]
+        FfmpegOperation::Convert { input, output, container, quality_mode, crf, bitrate, resolution, fps } => {
+            let mut args = vec!["-y".into(), "-i".into(), input.clone()];
+
+            let webm = container == "webm";
+            let vcodec = if webm { "libvpx-vp9" } else { "libx264" };
+            let acodec = if webm { "libopus" } else { "aac" };
+
+            args.extend(["-c:v".into(), vcodec.into()]);
+
+            match quality_mode.as_str() {
+                "bitrate" => {
+                    let bv = bitrate.as_deref().unwrap_or("2000k");
+                    args.extend(["-b:v".into(), bv.into()]);
+                }
+                _ => {
+                    let q = crf.unwrap_or(23);
+                    args.extend(["-crf".into(), q.to_string()]);
+                    if webm { args.extend(["-b:v".into(), "0".into()]); }
+                }
+            }
+            if !webm {
+                args.extend(["-preset".into(), "medium".into()]);
+            }
+
+            // Video filters: scale + fps
+            let mut filters = Vec::<String>::new();
+            if let Some(res) = resolution {
+                let h: Option<u32> = match res.as_str() {
+                    "1080p" => Some(1080), "720p" => Some(720), "480p" => Some(480), _ => None,
+                };
+                if let Some(h) = h { filters.push(format!("scale=-2:{h}")); }
+            }
+            if let Some(f) = fps { filters.push(format!("fps={f}")); }
+            if !filters.is_empty() {
+                args.extend(["-vf".into(), filters.join(",")]);
+            }
+
+            args.extend(["-c:a".into(), acodec.into()]);
+            args.push(output.clone());
+            args
         }
         FfmpegOperation::Trim { input, output, start, duration } => {
             vec![

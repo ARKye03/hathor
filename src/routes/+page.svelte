@@ -16,8 +16,32 @@
   let logs = $state<string[]>([]);
   let logPanel = $state<HTMLDivElement | null>(null);
 
+  type Container = "mp4" | "mkv" | "mov" | "webm";
+  type QualityMode = "crf" | "bitrate";
+  type Resolution = "keep" | "1080p" | "720p" | "480p";
+  type Fps = "keep" | "24" | "30" | "60";
+
   let convertInput = $state("");
   let convertOutput = $state("");
+  let convertContainer = $state<Container>("mp4");
+  let convertQualityMode = $state<QualityMode>("crf");
+  let convertCrf = $state(23);
+  let convertBitrate = $state("2000k");
+  let convertResolution = $state<Resolution>("keep");
+  let convertFps = $state<Fps>("keep");
+
+  // Auto-update output extension when container changes.
+  const CONTAINERS: Container[] = ["mp4", "mkv", "mov", "webm"];
+  $effect(() => {
+    const ext = convertContainer;
+    if (!convertOutput) return;
+    const dot = convertOutput.lastIndexOf(".");
+    if (dot === -1) return;
+    const cur = convertOutput.slice(dot + 1).toLowerCase();
+    if ((CONTAINERS as string[]).includes(cur)) {
+      convertOutput = convertOutput.slice(0, dot + 1) + ext;
+    }
+  });
   let trimInput = $state("");
   let trimOutput = $state("");
   let trimStart = $state("00:00:00");
@@ -60,7 +84,17 @@
 
   function buildOperation(): FfmpegOperation {
     if (activeTab === "convert") {
-      return { type: "convert", input: convertInput, output: convertOutput };
+      return {
+        type: "convert",
+        input: convertInput,
+        output: convertOutput,
+        container: convertContainer,
+        quality_mode: convertQualityMode,
+        crf: convertQualityMode === "crf" ? convertCrf : null,
+        bitrate: convertQualityMode === "bitrate" ? convertBitrate : null,
+        resolution: convertResolution === "keep" ? null : convertResolution,
+        fps: convertFps === "keep" ? null : parseInt(convertFps),
+      };
     } else if (activeTab === "trim") {
       return { type: "trim", input: trimInput, output: trimOutput, start: trimStart, duration: trimDuration };
     } else if (activeTab === "compress") {
@@ -226,22 +260,106 @@
       <div class="flex-1 px-5 py-5 flex flex-col gap-4 overflow-y-auto">
 
         {#if activeTab === "convert"}
+          <!-- Input -->
           <label class="flex flex-col gap-2">
             <span class="text-[9px] font-semibold tracking-[0.2em] uppercase text-muted-foreground">Input</span>
             <div class="flex">
               <input type="text" spellcheck="false" bind:value={convertInput} placeholder="/path/to/input.mkv"
                 class="bg-input border border-border text-foreground font-mono text-[11px] px-3 py-2 flex-1 min-w-0 outline-none transition-colors placeholder:text-muted-foreground focus:border-foreground" />
-              <button type="button" onclick={() => pickInput((v) => convertInput = v)} class="browse-btn">
+              <button type="button" aria-label="Browse" onclick={() => pickInput((v) => convertInput = v)} class="browse-btn">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>
               </button>
             </div>
           </label>
+
+          <!-- Container -->
+          <div class="flex flex-col gap-2">
+            <span class="text-[9px] font-semibold tracking-[0.2em] uppercase text-muted-foreground">Container</span>
+            <div class="flex border border-border">
+              {#each (["mp4", "mkv", "mov", "webm"] as Container[]) as c, i}
+                <button type="button" onclick={() => convertContainer = c}
+                  class="flex-1 py-1.5 text-[9px] font-semibold tracking-[0.12em] uppercase font-mono border-0 border-r border-border cursor-pointer transition-colors"
+                  class:bg-primary={convertContainer === c}
+                  class:text-primary-foreground={convertContainer === c}
+                  class:bg-transparent={convertContainer !== c}
+                  class:text-muted-foreground={convertContainer !== c}
+                  class:border-r-0={i === 3}
+                >{c}</button>
+              {/each}
+            </div>
+          </div>
+
+          <!-- Quality mode -->
+          <div class="flex flex-col gap-2">
+            <span class="text-[9px] font-semibold tracking-[0.2em] uppercase text-muted-foreground">Quality</span>
+            <div class="flex border border-border">
+              {#each ([["crf", "CRF"], ["bitrate", "Bitrate"]] as [QualityMode, string][]) as [mode, label]}
+                <button type="button" onclick={() => convertQualityMode = mode}
+                  class="flex-1 py-1.5 text-[9px] font-semibold tracking-[0.12em] uppercase font-mono border-0 border-r border-border last:border-r-0 cursor-pointer transition-colors"
+                  class:bg-primary={convertQualityMode === mode}
+                  class:text-primary-foreground={convertQualityMode === mode}
+                  class:bg-transparent={convertQualityMode !== mode}
+                  class:text-muted-foreground={convertQualityMode !== mode}
+                >{label}</button>
+              {/each}
+            </div>
+            {#if convertQualityMode === "crf"}
+              <div class="flex items-baseline justify-between text-[9px] mt-1">
+                <span class="text-muted-foreground">CRF</span>
+                <span class="text-foreground tabular-nums">{convertCrf}</span>
+              </div>
+              <input type="range" min="0" max="51" bind:value={convertCrf} class="slider w-full"
+                style="--fill: {((convertCrf / 51) * 100).toFixed(1)}%" />
+              <div class="flex justify-between text-[9px] text-muted-foreground">
+                <span>0 · Lossless</span><span>51 · Worst</span>
+              </div>
+            {:else}
+              <input type="text" spellcheck="false" bind:value={convertBitrate} placeholder="2000k"
+                class="bg-input border border-border text-foreground font-mono text-[11px] px-3 py-2 outline-none transition-colors placeholder:text-muted-foreground focus:border-foreground" />
+            {/if}
+          </div>
+
+          <!-- Resolution -->
+          <div class="flex flex-col gap-2">
+            <span class="text-[9px] font-semibold tracking-[0.2em] uppercase text-muted-foreground">Resolution</span>
+            <div class="flex border border-border">
+              {#each (["keep", "1080p", "720p", "480p"] as Resolution[]) as r, i}
+                <button type="button" onclick={() => convertResolution = r}
+                  class="flex-1 py-1.5 text-[9px] font-semibold tracking-[0.1em] uppercase font-mono border-0 border-r border-border cursor-pointer transition-colors"
+                  class:bg-primary={convertResolution === r}
+                  class:text-primary-foreground={convertResolution === r}
+                  class:bg-transparent={convertResolution !== r}
+                  class:text-muted-foreground={convertResolution !== r}
+                  class:border-r-0={i === 3}
+                >{r}</button>
+              {/each}
+            </div>
+          </div>
+
+          <!-- Frame rate -->
+          <div class="flex flex-col gap-2">
+            <span class="text-[9px] font-semibold tracking-[0.2em] uppercase text-muted-foreground">Frame Rate</span>
+            <div class="flex border border-border">
+              {#each (["keep", "24", "30", "60"] as Fps[]) as f, i}
+                <button type="button" onclick={() => convertFps = f}
+                  class="flex-1 py-1.5 text-[9px] font-semibold tracking-[0.1em] uppercase font-mono border-0 border-r border-border cursor-pointer transition-colors"
+                  class:bg-primary={convertFps === f}
+                  class:text-primary-foreground={convertFps === f}
+                  class:bg-transparent={convertFps !== f}
+                  class:text-muted-foreground={convertFps !== f}
+                  class:border-r-0={i === 3}
+                >{f === "keep" ? f : `${f} fps`}</button>
+              {/each}
+            </div>
+          </div>
+
+          <!-- Output -->
           <label class="flex flex-col gap-2">
             <span class="text-[9px] font-semibold tracking-[0.2em] uppercase text-muted-foreground">Output</span>
             <div class="flex">
               <input type="text" spellcheck="false" bind:value={convertOutput} placeholder="/path/to/output.mp4"
                 class="bg-input border border-border text-foreground font-mono text-[11px] px-3 py-2 flex-1 min-w-0 outline-none transition-colors placeholder:text-muted-foreground focus:border-foreground" />
-              <button type="button" onclick={() => pickOutput((v) => convertOutput = v)} class="browse-btn">
+              <button type="button" aria-label="Browse" onclick={() => pickOutput((v) => convertOutput = v)} class="browse-btn">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>
               </button>
             </div>

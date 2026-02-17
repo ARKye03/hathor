@@ -2,7 +2,17 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 export type FfmpegOperation =
-  | { type: "convert"; input: string; output: string }
+  | {
+      type: "convert";
+      input: string;
+      output: string;
+      container: string;
+      quality_mode: string;
+      crf: number | null;
+      bitrate: string | null;
+      resolution: string | null;
+      fps: number | null;
+    }
   | { type: "trim"; input: string; output: string; start: string; duration: string }
   | { type: "compress"; input: string; output: string; crf: number }
   | { type: "remux"; input: string; output: string };
