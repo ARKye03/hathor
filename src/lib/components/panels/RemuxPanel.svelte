@@ -4,10 +4,17 @@
   interface Props {
     input?: string;
     output?: string;
+    compatibilityWarning?: string | null;
     onpickinput: () => void;
     onpickoutput: () => void;
   }
-  let { input = $bindable(""), output = $bindable(""), onpickinput, onpickoutput }: Props = $props();
+  let {
+    input = $bindable(""),
+    output = $bindable(""),
+    compatibilityWarning = null,
+    onpickinput,
+    onpickoutput
+  }: Props = $props();
 </script>
 
 <div class="flex flex-col gap-1.5 pb-1">
@@ -26,3 +33,7 @@
   <span class="text-[9px] font-semibold tracking-[0.2em] uppercase text-muted-foreground">Output</span>
   <BrowseInput bind:value={output} placeholder="/path/to/output.mp4" onbrowse={onpickoutput} />
 </label>
+
+{#if compatibilityWarning}
+  <p class="text-[9px] text-destructive">{compatibilityWarning}</p>
+{/if}

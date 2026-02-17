@@ -168,6 +168,33 @@
   // ── Auto-update output extension when container changes ───────────────────────
 
   const CONTAINERS: Container[] = ["mp4", "mkv", "mov", "webm", "gif"];
+  type KnownOutputContainer = Container | "avi";
+  const CONTAINER_HINTS: Record<KnownOutputContainer, { video: string[]; audio: string[] }> = {
+    mp4: {
+      video: ["h264", "hevc", "mpeg4", "av1"],
+      audio: ["aac", "mp3", "ac3", "eac3", "alac"],
+    },
+    mov: {
+      video: ["h264", "hevc", "mpeg4", "prores", "dnxhd", "av1"],
+      audio: ["aac", "alac", "pcm_s16le", "pcm_s24le", "ac3"],
+    },
+    webm: {
+      video: ["vp8", "vp9", "av1"],
+      audio: ["opus", "vorbis"],
+    },
+    gif: {
+      video: ["gif"],
+      audio: [],
+    },
+    mkv: {
+      video: [],
+      audio: [],
+    },
+    avi: {
+      video: ["mpeg4", "h264", "mpeg2video", "msmpeg4v3"],
+      audio: ["mp3", "ac3", "pcm_s16le"],
+    },
+  };
   $effect(() => {
     const ext = convertContainer;
     if (!convertOutput) return;
@@ -192,6 +219,45 @@
     if (!dir) return file;
     const sep = dir.includes("\\") ? "\\" : "/";
     return dir.endsWith("/") || dir.endsWith("\\") ? `${dir}${file}` : `${dir}${sep}${file}`;
+  }
+
+  function parseOutputContainer(path: string): KnownOutputContainer | null {
+    const dot = path.lastIndexOf(".");
+    if (dot < 0 || dot === path.length - 1) return null;
+    const ext = path.slice(dot + 1).toLowerCase();
+    if (ext === "avi") return "avi";
+    return (CONTAINERS as string[]).includes(ext) ? ext as Container : null;
+  }
+
+  function prettyCodec(codec: string): string {
+    if (!codec) return "unknown";
+    return codec.toUpperCase();
+  }
+
+  function remuxCompatibilityWarning(info: MediaInfo | null, outputPath: string): string | null {
+    if (!info || !outputPath) return null;
+    const container = parseOutputContainer(outputPath);
+    if (!container) return null;
+
+    const video = info.streams.find((s) => s.codec_type === "video");
+    const audio = info.streams.find((s) => s.codec_type === "audio");
+
+    if (container === "gif") {
+      if (audio) return "GIF does not support audio streams. Remux output may fail.";
+      if (video && video.codec_name !== "gif") return `GIF expects GIF video, but input video is ${prettyCodec(video.codec_name)}.`;
+      return null;
+    }
+
+    if (container === "mkv") return null;
+    const hints = CONTAINER_HINTS[container];
+
+    if (video && hints.video.length > 0 && !hints.video.includes(video.codec_name)) {
+      return `${container.toUpperCase()} may not support ${prettyCodec(video.codec_name)} video in many players. Use Encode instead of Remux.`;
+    }
+    if (audio && hints.audio.length > 0 && !hints.audio.includes(audio.codec_name)) {
+      return `${container.toUpperCase()} may not support ${prettyCodec(audio.codec_name)} audio in many players. Use Encode instead of Remux.`;
+    }
+    return null;
   }
 
   function inferOutputPath(tab: Tab, inputPath: string): string {
@@ -445,6 +511,14 @@
   const pendingCount = $derived(queue.filter(j => j.status === "pending").length);
   const selectedJob = $derived(queue.find(j => j.id === selectedJobId) ?? null);
   const activeMode = $derived(MODES.find((m) => m.tab === activeTab) ?? MODES[0]);
+  const convertCompatibilityWarning = $derived(
+    mediaInfo && activeTab === "convert" && convertContainer === "gif" && mediaInfo.streams.some((s) => s.codec_type === "audio")
+      ? "GIF does not support audio. Input audio tracks will be dropped."
+      : null
+  );
+  const remuxContainerWarning = $derived(
+    activeTab === "remux" ? remuxCompatibilityWarning(mediaInfo, remuxOutput) : null
+  );
 
   const queueStatus = $derived<QueueStatus>(
     queueRunning ? "running" :
@@ -547,6 +621,7 @@
             bind:bitrate={convertBitrate}
             bind:resolution={convertResolution}
             bind:fps={convertFps}
+            compatibilityWarning={convertCompatibilityWarning}
             onpickinput={() => pickInput((v) => convertInput = v)}
             onpickoutput={() => pickOutput((v) => convertOutput = v)}
           />
@@ -601,6 +676,7 @@
           <RemuxPanel
             bind:input={remuxInput}
             bind:output={remuxOutput}
+            compatibilityWarning={remuxContainerWarning}
             onpickinput={() => pickInput((v) => remuxInput = v)}
             onpickoutput={() => pickOutput((v) => remuxOutput = v)}
           />

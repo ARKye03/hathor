@@ -11,6 +11,7 @@
     bitrate?: string;
     resolution?: Resolution;
     fps?: Fps;
+    compatibilityWarning?: string | null;
     onpickinput: () => void;
     onpickoutput: () => void;
   }
@@ -23,6 +24,7 @@
     bitrate = $bindable("2000k"),
     resolution = $bindable<Resolution>("keep"),
     fps = $bindable<Fps>("keep"),
+    compatibilityWarning = null,
     onpickinput,
     onpickoutput,
   }: Props = $props();
@@ -114,3 +116,7 @@
   <span class="text-[9px] font-semibold tracking-[0.2em] uppercase text-muted-foreground">Output</span>
   <BrowseInput bind:value={output} placeholder="/path/to/output.mp4" onbrowse={onpickoutput} />
 </label>
+
+{#if compatibilityWarning}
+  <p class="text-[9px] text-destructive">{compatibilityWarning}</p>
+{/if}

@@ -97,7 +97,7 @@ This roadmap now tracks implementation status directly.
 - [ ] Smart warnings
   - [ ] Remux possible suggestion
   - [ ] "This cut will re-encode" warning
-  - [ ] Codec/container compatibility warning
+  - [x] Codec/container compatibility warning
 
 - [ ] History
   - [ ] Recent jobs
@@ -106,6 +106,6 @@ This roadmap now tracks implementation status directly.
 
 ## Next Implementation Targets
 
-1. Add first smart warning: codec/container compatibility.
-2. Add crop presets (16:9, 1:1, center-crop shortcuts).
-3. Add concatenate flow for matching clips.
+1. Add crop presets (16:9, 1:1, center-crop shortcuts).
+2. Add concatenate flow for matching clips.
+3. Add "This cut will re-encode" warning.
