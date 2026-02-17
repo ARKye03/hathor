@@ -1,4 +1,6 @@
 @import "tailwindcss";
+@plugin "daisyui";
+
 
 @font-face {
   font-family: "Geist Sans";
@@ -139,20 +141,22 @@
   flex-shrink: 0;
   border-radius: 2px;
 }
-.browse-btn:hover { background: var(--muted); }
+
+.browse-btn:hover {
+  background: var(--muted);
+}
 
 .slider {
   appearance: none;
   -webkit-appearance: none;
   height: 1px;
-  background: linear-gradient(
-    to right,
-    var(--foreground) var(--fill, 45%),
-    var(--border) var(--fill, 45%)
-  );
+  background: linear-gradient(to right,
+      var(--foreground) var(--fill, 45%),
+      var(--border) var(--fill, 45%));
   outline: none;
   cursor: pointer;
 }
+
 .slider::-webkit-slider-thumb {
   -webkit-appearance: none;
   width: 11px;
@@ -161,10 +165,20 @@
   cursor: pointer;
 }
 
-.dot-pulse { animation: pulse 1s ease-in-out infinite; }
+.dot-pulse {
+  animation: pulse 1s ease-in-out infinite;
+}
+
 @keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.15; }
+
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.15;
+  }
 }
 
 .spinner {
@@ -176,12 +190,28 @@
   border-radius: 50%;
   animation: spin 0.6s linear infinite;
 }
-@keyframes spin { to { transform: rotate(360deg); } }
 
-::-webkit-scrollbar { width: 3px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--border); }
-::-webkit-scrollbar-thumb:hover { background: var(--foreground); }
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+::-webkit-scrollbar {
+  width: 3px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--foreground);
+}
 
 @theme inline {
   --color-background: var(--background);

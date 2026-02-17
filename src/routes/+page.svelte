@@ -782,16 +782,17 @@
           <span class="activity-group-label">Video</span>
           {#each MODES.filter((m) => VIDEO_MODE_TABS.includes(m.tab)) as mode}
             {@const Icon = mode.icon}
-            <button
-              type="button"
-              title={mode.label}
-              aria-label={mode.label}
-              onclick={() => { activeTab = mode.tab; mediaInfo = null; settingsOpen = false; }}
-              class="activity-btn"
-              class:activity-btn-active={activeTab === mode.tab && !settingsOpen}
-            >
-              <Icon size={17} strokeWidth={1.8} />
-            </button>
+            <div class="tooltip tooltip-right" data-tip={mode.label}>
+              <button
+                type="button"
+                aria-label={mode.label}
+                onclick={() => { activeTab = mode.tab; mediaInfo = null; settingsOpen = false; }}
+                class="activity-btn"
+                class:activity-btn-active={activeTab === mode.tab && !settingsOpen}
+              >
+                <Icon size={17} strokeWidth={1.8} />
+              </button>
+            </div>
           {/each}
         </div>
 
@@ -799,30 +800,32 @@
           <span class="activity-group-label">Audio</span>
           {#each MODES.filter((m) => AUDIO_MODE_TABS.includes(m.tab)) as mode}
             {@const Icon = mode.icon}
-            <button
-              type="button"
-              title={mode.label}
-              aria-label={mode.label}
-              onclick={() => { activeTab = mode.tab; mediaInfo = null; settingsOpen = false; }}
-              class="activity-btn"
-              class:activity-btn-active={activeTab === mode.tab && !settingsOpen}
-            >
-              <Icon size={17} strokeWidth={1.8} />
-            </button>
+            <div class="tooltip tooltip-right" data-tip={mode.label}>
+              <button
+                type="button"
+                aria-label={mode.label}
+                onclick={() => { activeTab = mode.tab; mediaInfo = null; settingsOpen = false; }}
+                class="activity-btn"
+                class:activity-btn-active={activeTab === mode.tab && !settingsOpen}
+              >
+                <Icon size={17} strokeWidth={1.8} />
+              </button>
+            </div>
           {/each}
         </div>
       </div>
       <div class="activity-foot">
-        <button
-          type="button"
-          title="Settings"
-          aria-label="Settings"
-          class="activity-btn"
-          class:activity-btn-active={settingsOpen}
-          onclick={() => settingsOpen = !settingsOpen}
-        >
-          <Settings2 size={17} strokeWidth={1.8} />
-        </button>
+        <div class="tooltip tooltip-right" data-tip="Settings">
+          <button
+            type="button"
+            aria-label="Settings"
+            class="activity-btn"
+            class:activity-btn-active={settingsOpen}
+            onclick={() => settingsOpen = !settingsOpen}
+          >
+            <Settings2 size={17} strokeWidth={1.8} />
+          </button>
+        </div>
       </div>
     </nav>
 
@@ -1066,8 +1069,13 @@
   }
 
   .activity-main {
-    overflow-y: auto;
+    overflow: visible;
     padding-bottom: 6px;
+  }
+
+  .activity-main :global(.tooltip),
+  .activity-foot :global(.tooltip) {
+    z-index: 30;
   }
 
   .activity-group {
