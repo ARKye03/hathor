@@ -3,7 +3,7 @@ use std::fs;
 use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter};
 
@@ -50,6 +50,67 @@ struct RunningProcess {
     temp_files: Vec<String>,
 }
 
+fn lock_running<'a>(
+    running: &'a Arc<Mutex<Option<RunningProcess>>>,
+) -> MutexGuard<'a, Option<RunningProcess>> {
+    running.lock().unwrap_or_else(|poisoned| {
+        eprintln!("recovering from poisoned ffmpeg running-process mutex");
+        poisoned.into_inner()
+    })
+}
+
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum QualityMode {
+    Crf,
+    Bitrate,
+}
+
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CompressPreset {
+    IphoneIpad,
+    Android,
+    Youtube,
+    Tiktok,
+    Instagram,
+}
+
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LoudnessPreset {
+    Broadcast,
+    Streaming,
+    Podcast,
+}
+
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ImageSequenceFormat {
+    Png,
+    Jpg,
+    Webp,
+}
+
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ImageFormat {
+    Png,
+    Jpg,
+    Webp,
+    Avif,
+    Ico,
+}
+
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ImageResizeMethod {
+    Lanczos,
+    Bicubic,
+    Bilinear,
+    Neighbor,
+}
+
 // ── Operations ────────────────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
@@ -58,8 +119,8 @@ pub enum FfmpegOperation {
     Convert {
         input: String,
         output: String,
-        container: String,    // "mp4" | "mkv" | "mov" | "webm"
-        quality_mode: String, // "crf" | "bitrate"
+        container: String, // "mp4" | "mkv" | "mov" | "webm"
+        quality_mode: QualityMode,
         crf: Option<u32>,
         bitrate: Option<String>,    // e.g. "2000k"
         resolution: Option<String>, // "1080p" | "720p" | "480p" | null = keep
@@ -76,7 +137,7 @@ pub enum FfmpegOperation {
         input: String,
         output: String,
         crf: u32,
-        preset: String,           // "iphone_ipad" | "android" | "youtube" | "tiktok" | "instagram"
+        preset: CompressPreset,
         target_size_mb: Option<f64>,
     },
     Transform {
@@ -107,7 +168,7 @@ pub enum FfmpegOperation {
         duration: Option<String>,
         fps: Option<u32>,
         scale_width: Option<u32>,
-        format: String, // "png" | "jpg" | "webp"
+        format: ImageSequenceFormat,
     },
     GifMaker {
         input: String,
@@ -131,7 +192,7 @@ pub enum FfmpegOperation {
     Loudness {
         input: String,
         output: String,
-        preset: String, // "broadcast" | "streaming" | "podcast"
+        preset: LoudnessPreset,
     },
     AudioControls {
         input: String,
@@ -143,10 +204,10 @@ pub enum FfmpegOperation {
     ImageConvert {
         input: String,
         output: String,
-        format: String, // "png" | "jpg" | "webp" | "avif" | "ico"
-        quality: u8,    // 1..100
+        format: ImageFormat,
+        quality: u8, // 1..100
         resize_percent: Option<u16>,
-        resize_method: Option<String>, // "lanczos" | "bicubic" | "bilinear" | "neighbor"
+        resize_method: Option<ImageResizeMethod>,
     },
     BurnSubtitles {
         input: String,
@@ -226,7 +287,9 @@ fn output_ext(output: &str) -> String {
 }
 
 fn escape_subtitles_filter_path(path: &str) -> String {
-    path.replace('\\', "\\\\").replace(':', "\\:").replace('\'', "\\'")
+    path.replace('\\', "\\\\")
+        .replace(':', "\\:")
+        .replace('\'', "\\'")
 }
 
 struct CompressPresetConfig {
@@ -236,33 +299,33 @@ struct CompressPresetConfig {
     faststart: bool,
 }
 
-fn compress_preset_config(preset: &str) -> CompressPresetConfig {
+fn compress_preset_config(preset: CompressPreset) -> CompressPresetConfig {
     match preset {
-        "iphone_ipad" => CompressPresetConfig {
+        CompressPreset::IphoneIpad => CompressPresetConfig {
             profile: "high",
             level: "4.1",
             audio_kbps: 160,
             faststart: true,
         },
-        "android" => CompressPresetConfig {
+        CompressPreset::Android => CompressPresetConfig {
             profile: "main",
             level: "4.0",
             audio_kbps: 128,
             faststart: true,
         },
-        "tiktok" => CompressPresetConfig {
+        CompressPreset::Tiktok => CompressPresetConfig {
             profile: "high",
             level: "4.1",
             audio_kbps: 128,
             faststart: true,
         },
-        "instagram" => CompressPresetConfig {
+        CompressPreset::Instagram => CompressPresetConfig {
             profile: "high",
             level: "4.1",
             audio_kbps: 128,
             faststart: true,
         },
-        _ => CompressPresetConfig {
+        CompressPreset::Youtube => CompressPresetConfig {
             profile: "high",
             level: "4.2",
             audio_kbps: 192,
@@ -296,7 +359,7 @@ fn build_compress_single_pass_args(
     input: &str,
     output: &str,
     crf: u32,
-    preset: &str,
+    preset: CompressPreset,
 ) -> Vec<String> {
     let cfg = compress_preset_config(preset);
     let mut args = vec![
@@ -324,18 +387,23 @@ fn build_compress_single_pass_args(
 
 fn create_passlog_prefix() -> Result<String, FfmpegError> {
     let ts = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
-    let path =
-        std::env::temp_dir().join(format!("hathor-passlog-{}-{}", std::process::id(), ts));
+    let path = std::env::temp_dir().join(format!("hathor-passlog-{}-{}", std::process::id(), ts));
     Ok(path.to_string_lossy().to_string())
+}
+
+struct TwoPassArgs {
+    pass1_args: Vec<String>,
+    pass2_args: Vec<String>,
+    temp_files: Vec<String>,
 }
 
 fn build_compress_two_pass_args(
     input: &str,
     output: &str,
-    preset: &str,
+    preset: CompressPreset,
     target_size_mb: f64,
     duration_secs: f64,
-) -> Result<(Vec<String>, Vec<String>, Vec<String>), FfmpegError> {
+) -> Result<TwoPassArgs, FfmpegError> {
     let cfg = compress_preset_config(preset);
     let passlog = create_passlog_prefix()?;
     let target_bytes = (target_size_mb.max(1.0) * 1024.0 * 1024.0) * 0.97;
@@ -401,7 +469,270 @@ fn build_compress_two_pass_args(
         format!("{passlog}.log"),
         format!("{passlog}.log.mbtree"),
     ];
-    Ok((pass1, pass2, temp_files))
+    Ok(TwoPassArgs {
+        pass1_args: pass1,
+        pass2_args: pass2,
+        temp_files,
+    })
+}
+
+fn resolution_to_height(resolution: Option<&str>) -> Option<u32> {
+    match resolution {
+        Some("1080p") => Some(1080),
+        Some("720p") => Some(720),
+        Some("480p") => Some(480),
+        _ => None,
+    }
+}
+
+struct ConvertArgsInput<'a> {
+    input: &'a str,
+    output: &'a str,
+    container: &'a str,
+    quality_mode: QualityMode,
+    crf: Option<u32>,
+    bitrate: Option<&'a str>,
+    resolution: Option<&'a str>,
+    fps: Option<u32>,
+}
+
+fn build_convert_args(input: ConvertArgsInput<'_>) -> Vec<String> {
+    let mut args = vec!["-y".into(), "-i".into(), input.input.to_string()];
+
+    if input.container == "gif" {
+        let mut filters = Vec::<String>::new();
+        if let Some(h) = resolution_to_height(input.resolution) {
+            filters.push(format!("scale=-2:{h}:flags=lanczos"));
+        }
+        if let Some(f) = input.fps {
+            filters.push(format!("fps={f}"));
+        }
+        let filter_base = if filters.is_empty() {
+            "fps=15".to_string()
+        } else {
+            filters.join(",")
+        };
+        let palette_filter =
+            format!("{filter_base},split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse");
+        args.extend(["-vf".into(), palette_filter]);
+        args.push(input.output.to_string());
+        return args;
+    }
+
+    let webm = input.container == "webm";
+    let vcodec = if webm { "libvpx-vp9" } else { "libx264" };
+    let acodec = if webm { "libopus" } else { "aac" };
+    args.extend(["-c:v".into(), vcodec.into()]);
+
+    match input.quality_mode {
+        QualityMode::Bitrate => {
+            let bv = input.bitrate.unwrap_or("2000k");
+            args.extend(["-b:v".into(), bv.into()]);
+        }
+        QualityMode::Crf => {
+            args.extend(["-crf".into(), input.crf.unwrap_or(23).to_string()]);
+            if webm {
+                args.extend(["-b:v".into(), "0".into()]);
+            }
+        }
+    }
+    if !webm {
+        args.extend(["-preset".into(), "medium".into()]);
+    }
+
+    let mut filters = Vec::<String>::new();
+    if let Some(h) = resolution_to_height(input.resolution) {
+        filters.push(format!("scale=-2:{h}"));
+    }
+    if let Some(f) = input.fps {
+        filters.push(format!("fps={f}"));
+    }
+    if !filters.is_empty() {
+        args.extend(["-vf".into(), filters.join(",")]);
+    }
+
+    args.extend(["-c:a".into(), acodec.into()]);
+    args.push(input.output.to_string());
+    args
+}
+
+fn build_image_sequence_args(
+    input: &str,
+    output_pattern: &str,
+    start: Option<&str>,
+    duration: Option<&str>,
+    fps: Option<u32>,
+    scale_width: Option<u32>,
+    format: ImageSequenceFormat,
+) -> Vec<String> {
+    let mut args = vec!["-y".into(), "-i".into(), input.to_string()];
+    if let Some(s) = start.filter(|s| !s.trim().is_empty()) {
+        args.extend(["-ss".into(), s.to_string()]);
+    }
+    if let Some(d) = duration.filter(|d| !d.trim().is_empty()) {
+        args.extend(["-t".into(), d.to_string()]);
+    }
+
+    let mut filters = Vec::<String>::new();
+    if let Some(v) = fps {
+        filters.push(format!("fps={}", v.max(1)));
+    }
+    if let Some(w) = scale_width.filter(|w| *w > 0) {
+        filters.push(format!("scale={w}:-1"));
+    }
+    if !filters.is_empty() {
+        args.extend(["-vf".into(), filters.join(",")]);
+    }
+
+    match format {
+        ImageSequenceFormat::Jpg => {
+            args.extend(["-c:v".into(), "mjpeg".into(), "-q:v".into(), "2".into()])
+        }
+        ImageSequenceFormat::Webp => {
+            args.extend(["-c:v".into(), "libwebp".into(), "-q:v".into(), "80".into()])
+        }
+        ImageSequenceFormat::Png => args.extend(["-c:v".into(), "png".into()]),
+    }
+    args.push(output_pattern.to_string());
+    args
+}
+
+fn build_image_convert_args(
+    input: &str,
+    output: &str,
+    format: ImageFormat,
+    quality: u8,
+    resize_percent: Option<u16>,
+    resize_method: Option<ImageResizeMethod>,
+) -> Vec<String> {
+    let q = quality.clamp(1, 100);
+    let mut args = vec![
+        "-y".into(),
+        "-i".into(),
+        input.to_string(),
+        "-frames:v".into(),
+        "1".into(),
+    ];
+    if format != ImageFormat::Ico {
+        if let Some(p) = resize_percent
+            .map(|pct| pct.clamp(1, 400))
+            .filter(|pct| *pct != 100)
+        {
+            let method = match resize_method.unwrap_or(ImageResizeMethod::Lanczos) {
+                ImageResizeMethod::Bicubic => "bicubic",
+                ImageResizeMethod::Bilinear => "bilinear",
+                ImageResizeMethod::Neighbor => "neighbor",
+                ImageResizeMethod::Lanczos => "lanczos",
+            };
+            args.extend([
+                "-vf".into(),
+                format!("scale=iw*{p}/100:ih*{p}/100:flags={method}"),
+            ]);
+        }
+    }
+    match format {
+        ImageFormat::Jpg => {
+            let jpg_q = ((100 - q as u32) * 30 / 99 + 2).to_string();
+            args.extend(["-c:v".into(), "mjpeg".into(), "-q:v".into(), jpg_q]);
+        }
+        ImageFormat::Webp => {
+            args.extend([
+                "-c:v".into(),
+                "libwebp".into(),
+                "-q:v".into(),
+                q.to_string(),
+            ]);
+        }
+        ImageFormat::Avif => {
+            let crf = ((100 - q as u32) * 62 / 99).to_string();
+            args.extend([
+                "-c:v".into(),
+                "libaom-av1".into(),
+                "-still-picture".into(),
+                "1".into(),
+                "-crf".into(),
+                crf,
+                "-b:v".into(),
+                "0".into(),
+            ]);
+        }
+        ImageFormat::Ico => {
+            args.extend([
+                "-vf".into(),
+                "scale=256:256:force_original_aspect_ratio=decrease,pad=256:256:(ow-iw)/2:(oh-ih)/2:color=0x00000000".into(),
+                "-c:v".into(),
+                "png".into(),
+            ]);
+        }
+        ImageFormat::Png => {
+            args.extend([
+                "-c:v".into(),
+                "png".into(),
+                "-compression_level".into(),
+                "6".into(),
+            ]);
+        }
+    }
+    args.push(output.to_string());
+    args
+}
+
+fn build_manage_tracks_args(
+    input: &str,
+    output: &str,
+    keep_audio_indices: &[u32],
+    keep_subtitle_indices: &[u32],
+    add_audio_input: Option<&str>,
+    add_subtitle_input: Option<&str>,
+) -> Vec<String> {
+    let mut args = vec!["-y".into(), "-i".into(), input.to_string()];
+    let mut next_input_idx = 1_u32;
+
+    let add_audio_idx = if let Some(path) = add_audio_input.filter(|p| !p.trim().is_empty()) {
+        args.extend(["-i".into(), path.to_string()]);
+        let idx = next_input_idx;
+        next_input_idx += 1;
+        Some(idx)
+    } else {
+        None
+    };
+
+    let add_sub_idx = if let Some(path) = add_subtitle_input.filter(|p| !p.trim().is_empty()) {
+        args.extend(["-i".into(), path.to_string()]);
+        Some(next_input_idx)
+    } else {
+        None
+    };
+
+    args.extend(["-map".into(), "0:v?".into()]);
+    for idx in keep_audio_indices {
+        args.extend(["-map".into(), format!("0:{idx}?")]);
+    }
+    for idx in keep_subtitle_indices {
+        args.extend(["-map".into(), format!("0:{idx}?")]);
+    }
+    if let Some(idx) = add_audio_idx {
+        args.extend(["-map".into(), format!("{idx}:a:0?")]);
+    }
+    if let Some(idx) = add_sub_idx {
+        args.extend(["-map".into(), format!("{idx}:s:0?")]);
+    }
+
+    args.extend(["-c:v".into(), "copy".into()]);
+    args.extend(["-c:a".into(), "copy".into()]);
+
+    let has_subtitles = !keep_subtitle_indices.is_empty() || add_sub_idx.is_some();
+    if has_subtitles {
+        let ext = output_ext(output);
+        if ext == "mp4" || ext == "mov" || ext == "m4v" {
+            args.extend(["-c:s".into(), "mov_text".into()]);
+        } else {
+            args.extend(["-c:s".into(), "copy".into()]);
+        }
+    }
+
+    args.push(output.to_string());
+    args
 }
 
 pub fn build_args(op: &FfmpegOperation) -> Result<(Vec<String>, Vec<String>), FfmpegError> {
@@ -415,84 +746,19 @@ pub fn build_args(op: &FfmpegOperation) -> Result<(Vec<String>, Vec<String>), Ff
             bitrate,
             resolution,
             fps,
-        } => {
-            let mut args = vec!["-y".into(), "-i".into(), input.clone()];
-
-            if container == "gif" {
-                let mut filters = Vec::<String>::new();
-                if let Some(res) = resolution {
-                    let h: Option<u32> = match res.as_str() {
-                        "1080p" => Some(1080),
-                        "720p" => Some(720),
-                        "480p" => Some(480),
-                        _ => None,
-                    };
-                    if let Some(h) = h {
-                        filters.push(format!("scale=-2:{h}:flags=lanczos"));
-                    }
-                }
-                if let Some(f) = fps {
-                    filters.push(format!("fps={f}"));
-                }
-                let filter_base = if filters.is_empty() {
-                    "fps=15".to_string()
-                } else {
-                    filters.join(",")
-                };
-                let palette_filter =
-                    format!("{filter_base},split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse");
-                args.extend(["-vf".into(), palette_filter]);
-                args.push(output.clone());
-                return Ok((args, vec![]));
-            }
-
-            let webm = container == "webm";
-            let vcodec = if webm { "libvpx-vp9" } else { "libx264" };
-            let acodec = if webm { "libopus" } else { "aac" };
-
-            args.extend(["-c:v".into(), vcodec.into()]);
-
-            match quality_mode.as_str() {
-                "bitrate" => {
-                    let bv = bitrate.as_deref().unwrap_or("2000k");
-                    args.extend(["-b:v".into(), bv.into()]);
-                }
-                _ => {
-                    let q = crf.unwrap_or(23);
-                    args.extend(["-crf".into(), q.to_string()]);
-                    if webm {
-                        args.extend(["-b:v".into(), "0".into()]);
-                    }
-                }
-            }
-            if !webm {
-                args.extend(["-preset".into(), "medium".into()]);
-            }
-
-            // Video filters: scale + fps
-            let mut filters = Vec::<String>::new();
-            if let Some(res) = resolution {
-                let h: Option<u32> = match res.as_str() {
-                    "1080p" => Some(1080),
-                    "720p" => Some(720),
-                    "480p" => Some(480),
-                    _ => None,
-                };
-                if let Some(h) = h {
-                    filters.push(format!("scale=-2:{h}"));
-                }
-            }
-            if let Some(f) = fps {
-                filters.push(format!("fps={f}"));
-            }
-            if !filters.is_empty() {
-                args.extend(["-vf".into(), filters.join(",")]);
-            }
-
-            args.extend(["-c:a".into(), acodec.into()]);
-            args.push(output.clone());
-            Ok((args, vec![]))
-        }
+        } => Ok((
+            build_convert_args(ConvertArgsInput {
+                input,
+                output,
+                container,
+                quality_mode: *quality_mode,
+                crf: *crf,
+                bitrate: bitrate.as_deref(),
+                resolution: resolution.as_deref(),
+                fps: *fps,
+            }),
+            vec![],
+        )),
         FfmpegOperation::Trim {
             input,
             output,
@@ -540,7 +806,10 @@ pub fn build_args(op: &FfmpegOperation) -> Result<(Vec<String>, Vec<String>), Ff
             crf,
             preset,
             ..
-        } => Ok((build_compress_single_pass_args(input, output, *crf, preset), vec![])),
+        } => Ok((
+            build_compress_single_pass_args(input, output, *crf, *preset),
+            vec![],
+        )),
         FfmpegOperation::Transform {
             input,
             output,
@@ -665,36 +934,18 @@ pub fn build_args(op: &FfmpegOperation) -> Result<(Vec<String>, Vec<String>), Ff
             fps,
             scale_width,
             format,
-        } => {
-            let mut args = vec!["-y".into(), "-i".into(), input.clone()];
-            if let Some(s) = start.as_ref().filter(|s| !s.trim().is_empty()) {
-                args.extend(["-ss".into(), s.clone()]);
-            }
-            if let Some(d) = duration.as_ref().filter(|d| !d.trim().is_empty()) {
-                args.extend(["-t".into(), d.clone()]);
-            }
-
-            let mut filters = Vec::<String>::new();
-            if let Some(v) = fps {
-                filters.push(format!("fps={}", (*v).max(1)));
-            }
-            if let Some(w) = scale_width {
-                if *w > 0 {
-                    filters.push(format!("scale={}:-1", w));
-                }
-            }
-            if !filters.is_empty() {
-                args.extend(["-vf".into(), filters.join(",")]);
-            }
-
-            match format.as_str() {
-                "jpg" => args.extend(["-c:v".into(), "mjpeg".into(), "-q:v".into(), "2".into()]),
-                "webp" => args.extend(["-c:v".into(), "libwebp".into(), "-q:v".into(), "80".into()]),
-                _ => args.extend(["-c:v".into(), "png".into()]),
-            }
-            args.push(output_pattern.clone());
-            Ok((args, vec![]))
-        }
+        } => Ok((
+            build_image_sequence_args(
+                input,
+                output_pattern,
+                start.as_deref(),
+                duration.as_deref(),
+                *fps,
+                *scale_width,
+                *format,
+            ),
+            vec![],
+        )),
         FfmpegOperation::GifMaker {
             input,
             output,
@@ -742,7 +993,12 @@ pub fn build_args(op: &FfmpegOperation) -> Result<(Vec<String>, Vec<String>), Ff
                     "128k".into(),
                 ]),
                 "wav" => args.extend(["-c:a".into(), "pcm_s16le".into()]),
-                _ => args.extend(["-c:a".into(), "libmp3lame".into(), "-q:a".into(), "2".into()]),
+                _ => args.extend([
+                    "-c:a".into(),
+                    "libmp3lame".into(),
+                    "-q:a".into(),
+                    "2".into(),
+                ]),
             }
             args.push(output.clone());
             Ok((args, vec![]))
@@ -780,10 +1036,10 @@ pub fn build_args(op: &FfmpegOperation) -> Result<(Vec<String>, Vec<String>), Ff
             output,
             preset,
         } => {
-            let (i, lra, tp) = match preset.as_str() {
-                "streaming" => ("-16", "7", "-1.5"),
-                "podcast" => ("-19", "8", "-2.0"),
-                _ => ("-23", "7", "-2.0"),
+            let (i, lra, tp) = match *preset {
+                LoudnessPreset::Streaming => ("-16", "7", "-1.5"),
+                LoudnessPreset::Podcast => ("-19", "8", "-2.0"),
+                LoudnessPreset::Broadcast => ("-23", "7", "-2.0"),
             };
             Ok((
                 vec![
@@ -818,17 +1074,11 @@ pub fn build_args(op: &FfmpegOperation) -> Result<(Vec<String>, Vec<String>), Ff
         } => {
             let mut filters = vec![format!("volume={:.3}", volume.max(0.0))];
             if *fade_in_secs > 0.0 {
-                filters.push(format!(
-                    "afade=t=in:st=0:d={:.3}",
-                    fade_in_secs.max(0.0)
-                ));
+                filters.push(format!("afade=t=in:st=0:d={:.3}", fade_in_secs.max(0.0)));
             }
             if *fade_out_secs > 0.0 {
                 filters.push("areverse".into());
-                filters.push(format!(
-                    "afade=t=in:st=0:d={:.3}",
-                    fade_out_secs.max(0.0)
-                ));
+                filters.push(format!("afade=t=in:st=0:d={:.3}", fade_out_secs.max(0.0)));
                 filters.push("areverse".into());
             }
             Ok((
@@ -862,62 +1112,17 @@ pub fn build_args(op: &FfmpegOperation) -> Result<(Vec<String>, Vec<String>), Ff
             quality,
             resize_percent,
             resize_method,
-        } => {
-            let q = (*quality).clamp(1, 100);
-            let mut args = vec!["-y".into(), "-i".into(), input.clone(), "-frames:v".into(), "1".into()];
-            if format != "ico" {
-                if let Some(pct) = resize_percent {
-                let p = (*pct).clamp(1, 400);
-                if p != 100 {
-                    let method = match resize_method.as_deref() {
-                        Some("bicubic") => "bicubic",
-                        Some("bilinear") => "bilinear",
-                        Some("neighbor") => "neighbor",
-                        _ => "lanczos",
-                    };
-                    args.extend([
-                        "-vf".into(),
-                        format!("scale=iw*{p}/100:ih*{p}/100:flags={method}"),
-                    ]);
-                }
-            }
-            }
-            match format.as_str() {
-                "jpg" => {
-                    let jpg_q = ((100 - q as u32) * 30 / 99 + 2).to_string();
-                    args.extend(["-c:v".into(), "mjpeg".into(), "-q:v".into(), jpg_q]);
-                }
-                "webp" => {
-                    args.extend(["-c:v".into(), "libwebp".into(), "-q:v".into(), q.to_string()]);
-                }
-                "avif" => {
-                    let crf = ((100 - q as u32) * 62 / 99).to_string();
-                    args.extend([
-                        "-c:v".into(),
-                        "libaom-av1".into(),
-                        "-still-picture".into(),
-                        "1".into(),
-                        "-crf".into(),
-                        crf,
-                        "-b:v".into(),
-                        "0".into(),
-                    ]);
-                }
-                "ico" => {
-                    args.extend([
-                        "-vf".into(),
-                        "scale=256:256:force_original_aspect_ratio=decrease,pad=256:256:(ow-iw)/2:(oh-ih)/2:color=0x00000000".into(),
-                        "-c:v".into(),
-                        "png".into(),
-                    ]);
-                }
-                _ => {
-                    args.extend(["-c:v".into(), "png".into(), "-compression_level".into(), "6".into()]);
-                }
-            }
-            args.push(output.clone());
-            Ok((args, vec![]))
-        }
+        } => Ok((
+            build_image_convert_args(
+                input,
+                output,
+                *format,
+                *quality,
+                *resize_percent,
+                *resize_method,
+            ),
+            vec![],
+        )),
         FfmpegOperation::BurnSubtitles {
             input,
             subtitle_input,
@@ -928,7 +1133,10 @@ pub fn build_args(op: &FfmpegOperation) -> Result<(Vec<String>, Vec<String>), Ff
                 "-i".into(),
                 input.clone(),
                 "-vf".into(),
-                format!("subtitles='{}'", escape_subtitles_filter_path(subtitle_input)),
+                format!(
+                    "subtitles='{}'",
+                    escape_subtitles_filter_path(subtitle_input)
+                ),
                 "-c:v".into(),
                 "libx264".into(),
                 "-preset".into(),
@@ -948,57 +1156,17 @@ pub fn build_args(op: &FfmpegOperation) -> Result<(Vec<String>, Vec<String>), Ff
             keep_subtitle_indices,
             add_audio_input,
             add_subtitle_input,
-        } => {
-            let mut args = vec!["-y".into(), "-i".into(), input.clone()];
-            let mut next_input_idx = 1_u32;
-
-            let add_audio_idx = if let Some(path) = add_audio_input.as_ref().filter(|p| !p.trim().is_empty()) {
-                args.extend(["-i".into(), path.clone()]);
-                let idx = next_input_idx;
-                next_input_idx += 1;
-                Some(idx)
-            } else {
-                None
-            };
-
-            let add_sub_idx = if let Some(path) = add_subtitle_input.as_ref().filter(|p| !p.trim().is_empty()) {
-                args.extend(["-i".into(), path.clone()]);
-                let idx = next_input_idx;
-                Some(idx)
-            } else {
-                None
-            };
-
-            args.extend(["-map".into(), "0:v?".into()]);
-            for idx in keep_audio_indices {
-                args.extend(["-map".into(), format!("0:{idx}?")]);
-            }
-            for idx in keep_subtitle_indices {
-                args.extend(["-map".into(), format!("0:{idx}?")]);
-            }
-            if let Some(idx) = add_audio_idx {
-                args.extend(["-map".into(), format!("{idx}:a:0?")]);
-            }
-            if let Some(idx) = add_sub_idx {
-                args.extend(["-map".into(), format!("{idx}:s:0?")]);
-            }
-
-            args.extend(["-c:v".into(), "copy".into()]);
-            args.extend(["-c:a".into(), "copy".into()]);
-
-            let has_subtitles = !keep_subtitle_indices.is_empty() || add_sub_idx.is_some();
-            if has_subtitles {
-                let ext = output_ext(output);
-                if ext == "mp4" || ext == "mov" || ext == "m4v" {
-                    args.extend(["-c:s".into(), "mov_text".into()]);
-                } else {
-                    args.extend(["-c:s".into(), "copy".into()]);
-                }
-            }
-
-            args.push(output.clone());
-            Ok((args, vec![]))
-        }
+        } => Ok((
+            build_manage_tracks_args(
+                input,
+                output,
+                keep_audio_indices,
+                keep_subtitle_indices,
+                add_audio_input.as_deref(),
+                add_subtitle_input.as_deref(),
+            ),
+            vec![],
+        )),
     }
 }
 
@@ -1124,7 +1292,7 @@ async fn run_ffmpeg_once(
         .ok_or("Failed to capture ffmpeg stderr")?;
 
     {
-        let mut guard = running.lock().unwrap_or_else(|p| p.into_inner());
+        let mut guard = lock_running(&running);
         if let Some(ref mut prev) = *guard {
             let _ = prev.child.kill();
             cleanup_temp_files(&prev.temp_files);
@@ -1174,7 +1342,7 @@ async fn run_ffmpeg_once(
     });
 
     tauri::async_runtime::spawn_blocking(move || loop {
-        let mut guard = child_arc.lock().unwrap_or_else(|p| p.into_inner());
+        let mut guard = lock_running(&child_arc);
         match *guard {
             None => return -1,
             Some(ref mut p) => match p.child.try_wait() {
@@ -1232,10 +1400,14 @@ pub async fn run_ffmpeg(
                 .map(|m| m.duration_secs)
                 .unwrap_or(0.0)
                 .max(1.0);
-            let (pass1_args, pass2_args, pass_temp_files) = build_compress_two_pass_args(
+            let TwoPassArgs {
+                pass1_args,
+                pass2_args,
+                temp_files: pass_temp_files,
+            } = build_compress_two_pass_args(
                 input,
                 output,
-                preset,
+                *preset,
                 target_size_mb.unwrap_or(1.0),
                 duration,
             )
@@ -1290,7 +1462,7 @@ pub async fn run_ffmpeg(
 
 #[tauri::command]
 pub async fn cancel_ffmpeg(state: tauri::State<'_, FfmpegState>) -> Result<(), String> {
-    let mut guard = state.running.lock().unwrap_or_else(|p| p.into_inner());
+    let mut guard = lock_running(&state.running);
     if let Some(ref mut process) = *guard {
         process.child.kill().map_err(|e| e.to_string())?;
         if process.cleanup_partial {
@@ -1435,7 +1607,11 @@ const MEDIA_EXTENSIONS: [&str; 23] = [
 fn is_media_file(path: &Path) -> bool {
     path.extension()
         .and_then(|ext| ext.to_str())
-        .map(|ext| MEDIA_EXTENSIONS.iter().any(|&e| ext.eq_ignore_ascii_case(e)))
+        .map(|ext| {
+            MEDIA_EXTENSIONS
+                .iter()
+                .any(|&e| ext.eq_ignore_ascii_case(e))
+        })
         .unwrap_or(false)
 }
 
@@ -1512,4 +1688,74 @@ pub async fn resolve_output_path(path: String, policy: String) -> Result<String,
     }
 
     Err("failed to resolve unique output filename".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn convert_uses_bitrate_when_quality_mode_is_bitrate() {
+        let op = FfmpegOperation::Convert {
+            input: "in.mp4".into(),
+            output: "out.mp4".into(),
+            container: "mp4".into(),
+            quality_mode: QualityMode::Bitrate,
+            crf: Some(18),
+            bitrate: Some("1800k".into()),
+            resolution: None,
+            fps: None,
+        };
+        let (args, _) = build_args(&op).expect("convert args should build");
+        assert!(args.windows(2).any(|w| w[0] == "-b:v" && w[1] == "1800k"));
+        assert!(!args.iter().any(|a| a == "-crf"));
+    }
+
+    #[test]
+    fn image_convert_applies_resize_filter_for_non_ico() {
+        let op = FfmpegOperation::ImageConvert {
+            input: "in.png".into(),
+            output: "out.webp".into(),
+            format: ImageFormat::Webp,
+            quality: 80,
+            resize_percent: Some(50),
+            resize_method: Some(ImageResizeMethod::Lanczos),
+        };
+        let (args, _) = build_args(&op).expect("image convert args should build");
+        assert!(args
+            .iter()
+            .any(|a| a.contains("scale=iw*50/100:ih*50/100:flags=lanczos")));
+    }
+
+    #[test]
+    fn image_convert_ico_ignores_resize_and_forces_icon_filter() {
+        let op = FfmpegOperation::ImageConvert {
+            input: "in.png".into(),
+            output: "out.ico".into(),
+            format: ImageFormat::Ico,
+            quality: 80,
+            resize_percent: Some(50),
+            resize_method: Some(ImageResizeMethod::Bicubic),
+        };
+        let (args, _) = build_args(&op).expect("ico convert args should build");
+        assert!(args.iter().any(|a| a.contains("scale=256:256")));
+        assert!(!args.iter().any(|a| a.contains("scale=iw*50/100:ih*50/100")));
+    }
+
+    #[test]
+    fn manage_tracks_adds_expected_maps() {
+        let op = FfmpegOperation::ManageTracks {
+            input: "in.mkv".into(),
+            output: "out.mkv".into(),
+            keep_audio_indices: vec![1, 2],
+            keep_subtitle_indices: vec![3],
+            add_audio_input: Some("new_audio.aac".into()),
+            add_subtitle_input: Some("new_subs.srt".into()),
+        };
+        let (args, _) = build_args(&op).expect("manage tracks args should build");
+        assert!(args.windows(2).any(|w| w[0] == "-map" && w[1] == "0:1?"));
+        assert!(args.windows(2).any(|w| w[0] == "-map" && w[1] == "0:2?"));
+        assert!(args.windows(2).any(|w| w[0] == "-map" && w[1] == "0:3?"));
+        assert!(args.iter().any(|a| a == "1:a:0?" || a == "2:a:0?"));
+    }
 }
