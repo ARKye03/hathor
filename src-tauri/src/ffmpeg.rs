@@ -145,6 +145,8 @@ pub enum FfmpegOperation {
         output: String,
         format: String, // "png" | "jpg" | "webp" | "avif" | "ico"
         quality: u8,    // 1..100
+        resize_percent: Option<u16>,
+        resize_method: Option<String>, // "lanczos" | "bicubic" | "bilinear" | "neighbor"
     },
     BurnSubtitles {
         input: String,
@@ -858,9 +860,28 @@ pub fn build_args(op: &FfmpegOperation) -> Result<(Vec<String>, Vec<String>), Ff
             output,
             format,
             quality,
+            resize_percent,
+            resize_method,
         } => {
             let q = (*quality).clamp(1, 100);
             let mut args = vec!["-y".into(), "-i".into(), input.clone(), "-frames:v".into(), "1".into()];
+            if format != "ico" {
+                if let Some(pct) = resize_percent {
+                let p = (*pct).clamp(1, 400);
+                if p != 100 {
+                    let method = match resize_method.as_deref() {
+                        Some("bicubic") => "bicubic",
+                        Some("bilinear") => "bilinear",
+                        Some("neighbor") => "neighbor",
+                        _ => "lanczos",
+                    };
+                    args.extend([
+                        "-vf".into(),
+                        format!("scale=iw*{p}/100:ih*{p}/100:flags={method}"),
+                    ]);
+                }
+            }
+            }
             match format.as_str() {
                 "jpg" => {
                     let jpg_q = ((100 - q as u32) * 30 / 99 + 2).to_string();

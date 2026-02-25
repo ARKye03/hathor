@@ -58,7 +58,15 @@ export type FfmpegOperation =
   | { type: "replace_audio"; input: string; audio_input: string; output: string }
   | { type: "loudness"; input: string; output: string; preset: "broadcast" | "streaming" | "podcast" }
   | { type: "audio_controls"; input: string; output: string; volume: number; fade_in_secs: number; fade_out_secs: number }
-  | { type: "image_convert"; input: string; output: string; format: "png" | "jpg" | "webp" | "avif" | "ico"; quality: number }
+  | {
+      type: "image_convert";
+      input: string;
+      output: string;
+      format: "png" | "jpg" | "webp" | "avif" | "ico";
+      quality: number;
+      resize_percent: number | null;
+      resize_method: "lanczos" | "bicubic" | "bilinear" | "neighbor" | null;
+    }
   | { type: "burn_subtitles"; input: string; subtitle_input: string; output: string }
   | {
       type: "manage_tracks";

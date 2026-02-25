@@ -187,6 +187,9 @@
   let imageOutput = $state("");
   let imageFormat = $state<"png" | "jpg" | "webp" | "avif" | "ico">("png");
   let imageQuality = $state(82);
+  let imageResizeEnabled = $state(false);
+  let imageResizePercent = $state(100);
+  let imageResizeMethod = $state<"lanczos" | "bicubic" | "bilinear" | "neighbor">("lanczos");
 
   let burnSubtitlesInput = $state("");
   let burnSubtitlesFile = $state("");
@@ -653,6 +656,8 @@
         output,
         format: imageFormat,
         quality: Math.max(1, Math.min(100, imageQuality)),
+        resize_percent: imageResizeEnabled ? Math.max(1, Math.min(400, imageResizePercent)) : null,
+        resize_method: imageResizeEnabled ? imageResizeMethod : null,
       };
     } else if (activeTab === "burn_subtitles") {
       const input = inputOverride ?? burnSubtitlesInput;
@@ -1289,6 +1294,9 @@
             bind:output={imageOutput}
             bind:format={imageFormat}
             bind:quality={imageQuality}
+            bind:resizeEnabled={imageResizeEnabled}
+            bind:resizePercent={imageResizePercent}
+            bind:resizeMethod={imageResizeMethod}
             onpickinput={() => pickInput((v) => imageInput = v)}
             onpickoutput={() => pickOutput((v) => imageOutput = v)}
           />

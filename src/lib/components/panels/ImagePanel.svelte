@@ -2,12 +2,16 @@
   import BrowseInput from "$lib/components/BrowseInput.svelte";
 
   type ImageFormat = "png" | "jpg" | "webp" | "avif" | "ico";
+  type ResizeMethod = "lanczos" | "bicubic" | "bilinear" | "neighbor";
 
   interface Props {
     input?: string;
     output?: string;
     format?: ImageFormat;
     quality?: number;
+    resizeEnabled?: boolean;
+    resizePercent?: number;
+    resizeMethod?: ResizeMethod;
     onpickinput: () => void;
     onpickoutput: () => void;
   }
@@ -16,9 +20,14 @@
     output = $bindable(""),
     format = $bindable<ImageFormat>("png"),
     quality = $bindable(82),
+    resizeEnabled = $bindable(false),
+    resizePercent = $bindable(100),
+    resizeMethod = $bindable<ResizeMethod>("lanczos"),
     onpickinput,
     onpickoutput
   }: Props = $props();
+
+  const percentPresets = [100, 75, 50, 25];
 </script>
 
 <label class="flex flex-col gap-2">
@@ -52,6 +61,53 @@
       style="--fill: {quality.toFixed(1)}%" />
   </div>
 {/if}
+
+<div class="flex flex-col gap-2 border border-border bg-input px-3 py-3">
+  <label class="flex items-center justify-between gap-3">
+    <span class="text-[9px] font-semibold tracking-[0.2em] uppercase text-muted-foreground">Resize</span>
+    <input type="checkbox" class="toggle toggle-sm" bind:checked={resizeEnabled} />
+  </label>
+  {#if resizeEnabled}
+    <label class="flex flex-col gap-2">
+      <span class="text-[9px] font-semibold tracking-[0.2em] uppercase text-muted-foreground">Method</span>
+      <select bind:value={resizeMethod}
+        class="bg-background border border-border text-foreground text-[11px] px-2 py-2 outline-none focus:border-foreground">
+        <option value="lanczos">Lanczos3</option>
+        <option value="bicubic">Bicubic</option>
+        <option value="bilinear">Bilinear</option>
+        <option value="neighbor">Nearest</option>
+      </select>
+    </label>
+    <div class="flex flex-col gap-2">
+      <div class="flex items-baseline justify-between text-[9px]">
+        <span class="text-muted-foreground">Scale</span>
+        <span class="text-foreground tabular-nums">{resizePercent}%</span>
+      </div>
+      <div class="grid grid-cols-4 gap-1">
+        {#each percentPresets as preset}
+          <button
+            type="button"
+            onclick={() => resizePercent = preset}
+            class="py-1 text-[9px] border transition-colors"
+            class:bg-primary={resizePercent === preset}
+            class:text-primary-foreground={resizePercent === preset}
+            class:border-primary={resizePercent === preset}
+            class:bg-background={resizePercent !== preset}
+            class:text-muted-foreground={resizePercent !== preset}
+            class:border-border={resizePercent !== preset}
+          >{preset}%</button>
+        {/each}
+      </div>
+      <input type="range" min="1" max="400" bind:value={resizePercent} class="slider w-full"
+        style="--fill: {Math.min(100, resizePercent).toFixed(1)}%" />
+      <input type="number" min="1" max="400" bind:value={resizePercent}
+        class="bg-background border border-border text-foreground font-mono text-[11px] px-3 py-2 w-full outline-none transition-colors focus:border-foreground" />
+    </div>
+    {#if format === "ico"}
+      <p class="text-[9px] text-muted-foreground">ICO output is still normalized to 256x256.</p>
+    {/if}
+  {/if}
+</div>
 
 <label class="flex flex-col gap-2">
   <span class="text-[9px] font-semibold tracking-[0.2em] uppercase text-muted-foreground">Output</span>
