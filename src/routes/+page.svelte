@@ -124,6 +124,9 @@
   let compressInput = $state("");
   let compressOutput = $state("");
   let compressCrf = $state(23);
+  let compressPreset = $state<"iphone_ipad" | "android" | "youtube" | "tiktok" | "instagram">("youtube");
+  let compressSizeTargetEnabled = $state(false);
+  let compressSizeTargetMb = $state(25);
 
   let remuxInput = $state("");
   let remuxOutput = $state("");
@@ -514,7 +517,14 @@
     } else if (activeTab === "compress") {
       const input = inputOverride ?? compressInput;
       const output = forceAutoOutput || !compressOutput ? inferOutputPath("compress", input) : compressOutput;
-      return { type: "compress", input, output, crf: compressCrf };
+      return {
+        type: "compress",
+        input,
+        output,
+        crf: compressCrf,
+        preset: compressPreset,
+        target_size_mb: compressSizeTargetEnabled ? Math.max(1, compressSizeTargetMb) : null,
+      };
     } else if (activeTab === "extract_audio") {
       const input = inputOverride ?? extractAudioInput;
       const output = forceAutoOutput || !extractAudioOutput ? inferOutputPath("extract_audio", input) : extractAudioOutput;
@@ -828,6 +838,11 @@
   const mergeConcatReady = $derived(
     activeTab === "merge" && mergeInputs.length >= 2 && mergeInfos.length === mergeInputs.length && !mergeConcatMismatchWarning
   );
+  const compressSizeTargetWarning = $derived(
+    activeTab === "compress" && compressSizeTargetEnabled && (!Number.isFinite(compressSizeTargetMb) || compressSizeTargetMb < 1)
+      ? "Target size must be at least 1 MB."
+      : null
+  );
 
   const queueStatus = $derived<QueueStatus>(
     queueRunning ? "running" :
@@ -1002,9 +1017,15 @@
             bind:input={compressInput}
             bind:output={compressOutput}
             bind:crf={compressCrf}
+            bind:preset={compressPreset}
+            bind:sizeTargetEnabled={compressSizeTargetEnabled}
+            bind:sizeTargetMb={compressSizeTargetMb}
             onpickinput={() => pickInput((v) => compressInput = v)}
             onpickoutput={() => pickOutput((v) => compressOutput = v)}
           />
+          {#if compressSizeTargetWarning}
+            <p class="text-[9px] text-destructive">{compressSizeTargetWarning}</p>
+          {/if}
         {:else if activeTab === "extract_audio"}
           <ExtractAudioPanel
             bind:input={extractAudioInput}
@@ -1105,7 +1126,8 @@
             disabled={
               (activeTab === "merge" && mergeInputs.length > 1 && !!mergeConcatMismatchWarning) ||
               (activeTab === "replace_audio" && !replaceAudioTrackInput) ||
-              (activeTab === "burn_subtitles" && !burnSubtitlesFile)
+              (activeTab === "burn_subtitles" && !burnSubtitlesFile) ||
+              !!compressSizeTargetWarning
             }
             class="primary-cta bg-foreground text-background text-[10px] tracking-[0.25em] uppercase font-semibold py-3 w-full border-0 cursor-pointer hover:opacity-90 transition-opacity flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
           >+ Add to Queue</button>

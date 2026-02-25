@@ -24,7 +24,14 @@ export type FfmpegOperation =
       flip: "horizontal" | "vertical" | "both" | null;
     }
   | { type: "merge"; inputs: string[]; output: string }
-  | { type: "compress"; input: string; output: string; crf: number }
+  | {
+      type: "compress";
+      input: string;
+      output: string;
+      crf: number;
+      preset: "iphone_ipad" | "android" | "youtube" | "tiktok" | "instagram";
+      target_size_mb: number | null;
+    }
   | { type: "remux"; input: string; output: string }
   | { type: "extract_audio"; input: string; output: string; format: "mp3" | "aac" | "opus" | "wav" }
   | { type: "replace_audio"; input: string; audio_input: string; output: string }

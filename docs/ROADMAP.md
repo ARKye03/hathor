@@ -9,7 +9,7 @@ This roadmap now tracks implementation status directly.
   - [x] Drag and drop folders (recursive media discovery)
   - [x] Auto-read metadata via `ffprobe` (duration, codecs, bitrate, resolution, audio tracks, language tags)
 
-- [ ] Preset-based Convert
+- [x] Preset-based Convert
   - [x] Output container: MP4 / MKV / MOV / WebM
   - [x] Output container: GIF
   - [x] Quality modes: target quality (CRF) + target bitrate
@@ -61,9 +61,9 @@ This roadmap now tracks implementation status directly.
 
 ## Compression / Delivery Presets
 
-- [ ] Device presets (iPhone/iPad, Android)
-- [ ] Web presets (YouTube/TikTok/Instagram)
-- [ ] Size targeting ("fit to X MB", two-pass)
+- [x] Device presets (iPhone/iPad, Android)
+- [x] Web presets (YouTube/TikTok/Instagram)
+- [x] Size targeting ("fit to X MB", two-pass)
 
 ## Media Utilities
 
@@ -91,7 +91,7 @@ This roadmap now tracks implementation status directly.
 ## Quality-of-Life
 
 - [ ] Output rules
-  - [ ] Default output folder
+  - [x] Default output folder
   - [x] Naming templates
   - [ ] Overwrite/auto-increment policies
 
@@ -107,6 +107,6 @@ This roadmap now tracks implementation status directly.
 
 ## Next Implementation Targets
 
-1. Add device presets (iPhone/iPad, Android).
-2. Add web presets (YouTube/TikTok/Instagram).
-3. Add size targeting ("fit to X MB", two-pass).
+1. Add thumbnail capture.
+2. Add image sequence export.
+3. Add GIF maker (trim + scale + fps + palette).

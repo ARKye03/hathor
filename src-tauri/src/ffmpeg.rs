@@ -45,7 +45,7 @@ impl Default for FfmpegState {
 
 struct RunningProcess {
     child: Child,
-    output_path: String,
+    output_path: Option<String>,
     cleanup_partial: bool,
     temp_files: Vec<String>,
 }
@@ -76,6 +76,8 @@ pub enum FfmpegOperation {
         input: String,
         output: String,
         crf: u32,
+        preset: String,           // "iphone_ipad" | "android" | "youtube" | "tiktok" | "instagram"
+        target_size_mb: Option<f64>,
     },
     Transform {
         input: String,
@@ -197,6 +199,181 @@ fn output_ext(output: &str) -> String {
 
 fn escape_subtitles_filter_path(path: &str) -> String {
     path.replace('\\', "\\\\").replace(':', "\\:").replace('\'', "\\'")
+}
+
+struct CompressPresetConfig {
+    profile: &'static str,
+    level: &'static str,
+    audio_kbps: u32,
+    faststart: bool,
+}
+
+fn compress_preset_config(preset: &str) -> CompressPresetConfig {
+    match preset {
+        "iphone_ipad" => CompressPresetConfig {
+            profile: "high",
+            level: "4.1",
+            audio_kbps: 160,
+            faststart: true,
+        },
+        "android" => CompressPresetConfig {
+            profile: "main",
+            level: "4.0",
+            audio_kbps: 128,
+            faststart: true,
+        },
+        "tiktok" => CompressPresetConfig {
+            profile: "high",
+            level: "4.1",
+            audio_kbps: 128,
+            faststart: true,
+        },
+        "instagram" => CompressPresetConfig {
+            profile: "high",
+            level: "4.1",
+            audio_kbps: 128,
+            faststart: true,
+        },
+        _ => CompressPresetConfig {
+            profile: "high",
+            level: "4.2",
+            audio_kbps: 192,
+            faststart: true,
+        },
+    }
+}
+
+fn apply_compress_preset_video_args(args: &mut Vec<String>, cfg: &CompressPresetConfig) {
+    args.extend([
+        "-pix_fmt".into(),
+        "yuv420p".into(),
+        "-profile:v".into(),
+        cfg.profile.into(),
+        "-level:v".into(),
+        cfg.level.into(),
+    ]);
+}
+
+fn maybe_faststart_arg(output: &str, cfg: &CompressPresetConfig, args: &mut Vec<String>) {
+    if !cfg.faststart {
+        return;
+    }
+    let ext = output_ext(output);
+    if ext == "mp4" || ext == "mov" || ext == "m4v" {
+        args.extend(["-movflags".into(), "+faststart".into()]);
+    }
+}
+
+fn build_compress_single_pass_args(
+    input: &str,
+    output: &str,
+    crf: u32,
+    preset: &str,
+) -> Vec<String> {
+    let cfg = compress_preset_config(preset);
+    let mut args = vec![
+        "-y".into(),
+        "-i".into(),
+        input.to_string(),
+        "-c:v".into(),
+        "libx264".into(),
+        "-preset".into(),
+        "medium".into(),
+        "-crf".into(),
+        crf.to_string(),
+    ];
+    apply_compress_preset_video_args(&mut args, &cfg);
+    args.extend([
+        "-c:a".into(),
+        "aac".into(),
+        "-b:a".into(),
+        format!("{}k", cfg.audio_kbps),
+    ]);
+    maybe_faststart_arg(output, &cfg, &mut args);
+    args.push(output.to_string());
+    args
+}
+
+fn create_passlog_prefix() -> Result<String, FfmpegError> {
+    let ts = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    let path =
+        std::env::temp_dir().join(format!("hathor-passlog-{}-{}", std::process::id(), ts));
+    Ok(path.to_string_lossy().to_string())
+}
+
+fn build_compress_two_pass_args(
+    input: &str,
+    output: &str,
+    preset: &str,
+    target_size_mb: f64,
+    duration_secs: f64,
+) -> Result<(Vec<String>, Vec<String>, Vec<String>), FfmpegError> {
+    let cfg = compress_preset_config(preset);
+    let passlog = create_passlog_prefix()?;
+    let target_bytes = (target_size_mb.max(1.0) * 1024.0 * 1024.0) * 0.97;
+    let total_kbps = (target_bytes * 8.0 / duration_secs.max(1.0) / 1000.0).max(250.0);
+    let video_kbps = (total_kbps - cfg.audio_kbps as f64).max(200.0).round() as u64;
+    let bitrate = format!("{video_kbps}k");
+    let null_sink = if cfg!(target_os = "windows") {
+        "NUL".to_string()
+    } else {
+        "/dev/null".to_string()
+    };
+
+    let mut pass1 = vec![
+        "-y".into(),
+        "-i".into(),
+        input.to_string(),
+        "-c:v".into(),
+        "libx264".into(),
+        "-preset".into(),
+        "medium".into(),
+        "-b:v".into(),
+        bitrate.clone(),
+        "-pass".into(),
+        "1".into(),
+        "-passlogfile".into(),
+        passlog.clone(),
+        "-an".into(),
+        "-f".into(),
+        "mp4".into(),
+    ];
+    apply_compress_preset_video_args(&mut pass1, &cfg);
+    pass1.push(null_sink);
+
+    let mut pass2 = vec![
+        "-y".into(),
+        "-i".into(),
+        input.to_string(),
+        "-c:v".into(),
+        "libx264".into(),
+        "-preset".into(),
+        "medium".into(),
+        "-b:v".into(),
+        bitrate,
+        "-pass".into(),
+        "2".into(),
+        "-passlogfile".into(),
+        passlog.clone(),
+    ];
+    apply_compress_preset_video_args(&mut pass2, &cfg);
+    pass2.extend([
+        "-c:a".into(),
+        "aac".into(),
+        "-b:a".into(),
+        format!("{}k", cfg.audio_kbps),
+    ]);
+    maybe_faststart_arg(output, &cfg, &mut pass2);
+    pass2.push(output.to_string());
+
+    let temp_files = vec![
+        passlog.clone(),
+        format!("{passlog}-0.log"),
+        format!("{passlog}-0.log.mbtree"),
+        format!("{passlog}.log"),
+        format!("{passlog}.log.mbtree"),
+    ];
+    Ok((pass1, pass2, temp_files))
 }
 
 pub fn build_args(op: &FfmpegOperation) -> Result<(Vec<String>, Vec<String>), FfmpegError> {
@@ -329,19 +506,13 @@ pub fn build_args(op: &FfmpegOperation) -> Result<(Vec<String>, Vec<String>), Ff
                 ))
             }
         }
-        FfmpegOperation::Compress { input, output, crf } => Ok((
-            vec![
-                "-y".into(),
-                "-i".into(),
-                input.clone(),
-                "-vcodec".into(),
-                "libx264".into(),
-                "-crf".into(),
-                crf.to_string(),
-                output.clone(),
-            ],
-            vec![],
-        )),
+        FfmpegOperation::Compress {
+            input,
+            output,
+            crf,
+            preset,
+            ..
+        } => Ok((build_compress_single_pass_args(input, output, *crf, preset), vec![])),
         FfmpegOperation::Transform {
             input,
             output,
@@ -788,16 +959,15 @@ fn cleanup_temp_files(paths: &[String]) {
 
 // ── run_ffmpeg ────────────────────────────────────────────────────────────────
 
-#[tauri::command]
-pub async fn run_ffmpeg(
-    app: AppHandle,
-    state: tauri::State<'_, FfmpegState>,
-    operation: FfmpegOperation,
-    cleanup_partial: Option<bool>,
-) -> Result<(), String> {
-    let (args, temp_files) = build_args(&operation).map_err(|e| e.to_string())?;
-    let output_path = operation.output_path().to_string();
-    let cleanup_partial = cleanup_partial.unwrap_or(true);
+async fn run_ffmpeg_once(
+    app: &AppHandle,
+    running: Arc<Mutex<Option<RunningProcess>>>,
+    args: Vec<String>,
+    output_path: Option<String>,
+    cleanup_partial: bool,
+    temp_files: Vec<String>,
+    cleanup_temp_on_exit: bool,
+) -> Result<i32, String> {
     let command = format!(
         "ffmpeg {}",
         args.iter()
@@ -819,9 +989,8 @@ pub async fn run_ffmpeg(
         .take()
         .ok_or("Failed to capture ffmpeg stderr")?;
 
-    // Kill any previous job, store this child.
     {
-        let mut guard = state.running.lock().unwrap_or_else(|p| p.into_inner());
+        let mut guard = running.lock().unwrap_or_else(|p| p.into_inner());
         if let Some(ref mut prev) = *guard {
             let _ = prev.child.kill();
             cleanup_temp_files(&prev.temp_files);
@@ -834,12 +1003,8 @@ pub async fn run_ffmpeg(
         });
     }
 
-    let child_arc = Arc::clone(&state.running);
+    let child_arc = Arc::clone(&running);
     let app_clone = app.clone();
-
-    // Read stderr in background, splitting on \r and \n.
-    // FFmpeg writes progress lines with \r (not \n), so BufReader::lines() would
-    // buffer everything until EOF. We read in chunks and split manually.
     tauri::async_runtime::spawn_blocking(move || {
         let mut reader = BufReader::new(stderr);
         let mut pending = String::new();
@@ -864,7 +1029,6 @@ pub async fn run_ffmpeg(
                 }
             }
         }
-        // Flush anything left without a terminator.
         let line = pending.trim().to_string();
         if !line.is_empty() {
             if let Some(progress) = parse_progress(&line) {
@@ -875,18 +1039,21 @@ pub async fn run_ffmpeg(
         }
     });
 
-    // Poll try_wait so cancel_ffmpeg can call kill() without deadlocking.
-    let exit_code = tauri::async_runtime::spawn_blocking(move || loop {
+    tauri::async_runtime::spawn_blocking(move || loop {
         let mut guard = child_arc.lock().unwrap_or_else(|p| p.into_inner());
         match *guard {
-            None => return -1, // cancelled — child was taken
+            None => return -1,
             Some(ref mut p) => match p.child.try_wait() {
                 Ok(Some(status)) => {
                     let code = status.code().unwrap_or(-1);
                     if code != 0 && p.cleanup_partial {
-                        cleanup_partial_output(&p.output_path);
+                        if let Some(path) = p.output_path.as_deref() {
+                            cleanup_partial_output(path);
+                        }
                     }
-                    cleanup_temp_files(&p.temp_files);
+                    if cleanup_temp_on_exit {
+                        cleanup_temp_files(&p.temp_files);
+                    }
                     *guard = None;
                     return code;
                 }
@@ -895,7 +1062,9 @@ pub async fn run_ffmpeg(
                     std::thread::sleep(Duration::from_millis(50));
                 }
                 Err(_) => {
-                    cleanup_temp_files(&p.temp_files);
+                    if cleanup_temp_on_exit {
+                        cleanup_temp_files(&p.temp_files);
+                    }
                     *guard = None;
                     return -1;
                 }
@@ -903,7 +1072,83 @@ pub async fn run_ffmpeg(
         }
     })
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn run_ffmpeg(
+    app: AppHandle,
+    state: tauri::State<'_, FfmpegState>,
+    operation: FfmpegOperation,
+    cleanup_partial: Option<bool>,
+) -> Result<(), String> {
+    let cleanup_partial = cleanup_partial.unwrap_or(true);
+    let running = Arc::clone(&state.running);
+
+    let exit_code = match &operation {
+        FfmpegOperation::Compress {
+            input,
+            output,
+            preset,
+            target_size_mb,
+            ..
+        } if target_size_mb.is_some_and(|v| v > 0.0) => {
+            let duration = probe_media_inner(input.clone())
+                .await
+                .map(|m| m.duration_secs)
+                .unwrap_or(0.0)
+                .max(1.0);
+            let (pass1_args, pass2_args, pass_temp_files) = build_compress_two_pass_args(
+                input,
+                output,
+                preset,
+                target_size_mb.unwrap_or(1.0),
+                duration,
+            )
+            .map_err(|e| e.to_string())?;
+
+            let _ = app.emit("ffmpeg://log", "[hathor] two-pass size target: pass 1/2");
+            let pass1_code = run_ffmpeg_once(
+                &app,
+                Arc::clone(&running),
+                pass1_args,
+                None,
+                false,
+                pass_temp_files.clone(),
+                false,
+            )
+            .await?;
+            if pass1_code != 0 {
+                cleanup_temp_files(&pass_temp_files);
+                pass1_code
+            } else {
+                let _ = app.emit("ffmpeg://log", "[hathor] two-pass size target: pass 2/2");
+                run_ffmpeg_once(
+                    &app,
+                    Arc::clone(&running),
+                    pass2_args,
+                    Some(output.clone()),
+                    cleanup_partial,
+                    pass_temp_files,
+                    true,
+                )
+                .await?
+            }
+        }
+        _ => {
+            let (args, temp_files) = build_args(&operation).map_err(|e| e.to_string())?;
+            run_ffmpeg_once(
+                &app,
+                Arc::clone(&running),
+                args,
+                Some(operation.output_path().to_string()),
+                cleanup_partial,
+                temp_files,
+                true,
+            )
+            .await?
+        }
+    };
 
     let _ = app.emit("ffmpeg://done", exit_code);
     Ok(())
@@ -915,7 +1160,9 @@ pub async fn cancel_ffmpeg(state: tauri::State<'_, FfmpegState>) -> Result<(), S
     if let Some(ref mut process) = *guard {
         process.child.kill().map_err(|e| e.to_string())?;
         if process.cleanup_partial {
-            cleanup_partial_output(&process.output_path);
+            if let Some(path) = process.output_path.as_deref() {
+                cleanup_partial_output(path);
+            }
         }
         cleanup_temp_files(&process.temp_files);
         // Leave process in state; the wait loop will reap it via try_wait.
