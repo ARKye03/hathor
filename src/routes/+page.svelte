@@ -29,6 +29,9 @@
   import MergePanel from "$lib/components/panels/MergePanel.svelte";
   import CompressPanel from "$lib/components/panels/CompressPanel.svelte";
   import RemuxPanel from "$lib/components/panels/RemuxPanel.svelte";
+  import ThumbnailPanel from "$lib/components/panels/ThumbnailPanel.svelte";
+  import ImageSequencePanel from "$lib/components/panels/ImageSequencePanel.svelte";
+  import GifMakerPanel from "$lib/components/panels/GifMakerPanel.svelte";
   import ExtractAudioPanel from "$lib/components/panels/ExtractAudioPanel.svelte";
   import ReplaceAudioPanel from "$lib/components/panels/ReplaceAudioPanel.svelte";
   import LoudnessPanel from "$lib/components/panels/LoudnessPanel.svelte";
@@ -49,6 +52,9 @@
     { tab: "merge", label: "Merge", icon: Combine },
     { tab: "compress", label: "Shrink", icon: Minimize2 },
     { tab: "remux", label: "Remux", icon: Boxes },
+    { tab: "thumbnail", label: "Thumb", icon: ImageIcon },
+    { tab: "image_sequence", label: "Frames", icon: ImageIcon },
+    { tab: "gif_maker", label: "GIF", icon: ImageIcon },
     { tab: "burn_subtitles", label: "Sub Burn", icon: Captions },
     { tab: "track_manager", label: "Tracks", icon: ListVideo },
     { tab: "extract_audio", label: "Audio", icon: FileAudio2 },
@@ -57,7 +63,7 @@
     { tab: "audio_controls", label: "Audio FX", icon: SlidersHorizontal },
     { tab: "image", label: "Image", icon: ImageIcon },
   ];
-  const VIDEO_MODE_TABS: Tab[] = ["convert", "trim", "transform", "merge", "compress", "remux", "burn_subtitles", "track_manager"];
+  const VIDEO_MODE_TABS: Tab[] = ["convert", "trim", "transform", "merge", "compress", "remux", "thumbnail", "image_sequence", "gif_maker", "burn_subtitles", "track_manager"];
   const AUDIO_MODE_TABS: Tab[] = ["extract_audio", "replace_audio", "loudness", "audio_controls"];
   const IMAGE_MODE_TABS: Tab[] = ["image"];
   const RAIL_GROUPS: { label: string; icon: typeof FileVideo2; tabs: Tab[] }[] = [
@@ -130,6 +136,26 @@
 
   let remuxInput = $state("");
   let remuxOutput = $state("");
+
+  let thumbnailInput = $state("");
+  let thumbnailOutput = $state("");
+  let thumbnailTime = $state("00:00:01");
+
+  let imageSequenceInput = $state("");
+  let imageSequenceOutputPattern = $state("");
+  let imageSequenceStart = $state("");
+  let imageSequenceDuration = $state("");
+  let imageSequenceFps = $state(1);
+  let imageSequenceScaleWidth = $state(0);
+  let imageSequenceFormat = $state<"png" | "jpg" | "webp">("png");
+
+  let gifMakerInput = $state("");
+  let gifMakerOutput = $state("");
+  let gifMakerStart = $state("00:00:00");
+  let gifMakerDuration = $state("00:00:06");
+  let gifMakerFps = $state(15);
+  let gifMakerWidth = $state(480);
+  let gifMakerUsePalette = $state(true);
 
   let extractAudioInput = $state("");
   let extractAudioOutput = $state("");
@@ -290,6 +316,15 @@
     const cur = imageOutput.slice(dot + 1).toLowerCase();
     if (["png", "jpg", "jpeg", "webp", "avif", "ico"].includes(cur)) {
       imageOutput = imageOutput.slice(0, dot + 1) + imageFormat;
+    }
+  });
+  $effect(() => {
+    if (!imageSequenceOutputPattern) return;
+    const dot = imageSequenceOutputPattern.lastIndexOf(".");
+    if (dot === -1) return;
+    const cur = imageSequenceOutputPattern.slice(dot + 1).toLowerCase();
+    if (["png", "jpg", "jpeg", "webp"].includes(cur)) {
+      imageSequenceOutputPattern = imageSequenceOutputPattern.slice(0, dot + 1) + imageSequenceFormat;
     }
   });
   $effect(() => {
@@ -467,6 +502,12 @@
       ? imageFormat
       : tab === "burn_subtitles" || tab === "track_manager"
       ? (ext || "mp4")
+      : tab === "thumbnail"
+      ? "png"
+      : tab === "image_sequence"
+      ? imageSequenceFormat
+      : tab === "gif_maker"
+      ? "gif"
       : tab === "replace_audio" || tab === "loudness" || tab === "audio_controls"
       ? (ext || "mp4")
       : tab === "remux"
@@ -529,6 +570,39 @@
       const input = inputOverride ?? extractAudioInput;
       const output = forceAutoOutput || !extractAudioOutput ? inferOutputPath("extract_audio", input) : extractAudioOutput;
       return { type: "extract_audio", input, output, format: extractAudioFormat };
+    } else if (activeTab === "thumbnail") {
+      const input = inputOverride ?? thumbnailInput;
+      const output = forceAutoOutput || !thumbnailOutput ? inferOutputPath("thumbnail", input) : thumbnailOutput;
+      return { type: "thumbnail", input, output, time: thumbnailTime };
+    } else if (activeTab === "image_sequence") {
+      const input = inputOverride ?? imageSequenceInput;
+      const { dir, base } = splitPath(input);
+      const outDir = defaultOutputDir || dir;
+      const defaultPattern = joinPath(outDir, `${outputStem("image_sequence", input || base)}_%05d.${imageSequenceFormat}`);
+      const output_pattern = forceAutoOutput || !imageSequenceOutputPattern ? defaultPattern : imageSequenceOutputPattern;
+      return {
+        type: "image_sequence",
+        input,
+        output_pattern,
+        start: imageSequenceStart.trim() || null,
+        duration: imageSequenceDuration.trim() || null,
+        fps: Math.max(1, imageSequenceFps),
+        scale_width: imageSequenceScaleWidth > 0 ? imageSequenceScaleWidth : null,
+        format: imageSequenceFormat,
+      };
+    } else if (activeTab === "gif_maker") {
+      const input = inputOverride ?? gifMakerInput;
+      const output = forceAutoOutput || !gifMakerOutput ? inferOutputPath("gif_maker", input) : gifMakerOutput;
+      return {
+        type: "gif_maker",
+        input,
+        output,
+        start: gifMakerStart.trim() || null,
+        duration: gifMakerDuration.trim() || null,
+        width: gifMakerWidth > 0 ? gifMakerWidth : null,
+        fps: Math.max(1, gifMakerFps),
+        use_palette: gifMakerUsePalette,
+      };
     } else if (activeTab === "replace_audio") {
       const input = inputOverride ?? replaceAudioInput;
       const output = forceAutoOutput || !replaceAudioOutput ? inferOutputPath("replace_audio", input) : replaceAudioOutput;
@@ -755,6 +829,19 @@
     } else if (activeTab === "extract_audio") {
       extractAudioInput = path;
       if (!extractAudioOutput) extractAudioOutput = inferOutputPath("extract_audio", path);
+    } else if (activeTab === "thumbnail") {
+      thumbnailInput = path;
+      if (!thumbnailOutput) thumbnailOutput = inferOutputPath("thumbnail", path);
+    } else if (activeTab === "image_sequence") {
+      imageSequenceInput = path;
+      if (!imageSequenceOutputPattern) {
+        const { dir, base } = splitPath(path);
+        const outDir = defaultOutputDir || dir;
+        imageSequenceOutputPattern = joinPath(outDir, `${outputStem("image_sequence", path || base)}_%05d.${imageSequenceFormat}`);
+      }
+    } else if (activeTab === "gif_maker") {
+      gifMakerInput = path;
+      if (!gifMakerOutput) gifMakerOutput = inferOutputPath("gif_maker", path);
     } else if (activeTab === "replace_audio") {
       replaceAudioInput = path;
       if (!replaceAudioOutput) replaceAudioOutput = inferOutputPath("replace_audio", path);
@@ -1033,6 +1120,38 @@
             bind:format={extractAudioFormat}
             onpickinput={() => pickInput((v) => extractAudioInput = v)}
             onpickoutput={() => pickOutput((v) => extractAudioOutput = v)}
+          />
+        {:else if activeTab === "thumbnail"}
+          <ThumbnailPanel
+            bind:input={thumbnailInput}
+            bind:output={thumbnailOutput}
+            bind:time={thumbnailTime}
+            onpickinput={() => pickInput((v) => thumbnailInput = v)}
+            onpickoutput={() => pickOutput((v) => thumbnailOutput = v)}
+          />
+        {:else if activeTab === "image_sequence"}
+          <ImageSequencePanel
+            bind:input={imageSequenceInput}
+            bind:outputPattern={imageSequenceOutputPattern}
+            bind:start={imageSequenceStart}
+            bind:duration={imageSequenceDuration}
+            bind:fps={imageSequenceFps}
+            bind:scaleWidth={imageSequenceScaleWidth}
+            bind:format={imageSequenceFormat}
+            onpickinput={() => pickInput((v) => imageSequenceInput = v)}
+            onpickoutput={() => pickOutput((v) => imageSequenceOutputPattern = v)}
+          />
+        {:else if activeTab === "gif_maker"}
+          <GifMakerPanel
+            bind:input={gifMakerInput}
+            bind:output={gifMakerOutput}
+            bind:start={gifMakerStart}
+            bind:duration={gifMakerDuration}
+            bind:fps={gifMakerFps}
+            bind:width={gifMakerWidth}
+            bind:usePalette={gifMakerUsePalette}
+            onpickinput={() => pickInput((v) => gifMakerInput = v)}
+            onpickoutput={() => pickOutput((v) => gifMakerOutput = v)}
           />
         {:else if activeTab === "replace_audio"}
           <ReplaceAudioPanel

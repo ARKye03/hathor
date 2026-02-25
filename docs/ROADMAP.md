@@ -67,9 +67,9 @@ This roadmap now tracks implementation status directly.
 
 ## Media Utilities
 
-- [ ] Thumbnail capture
-- [ ] Image sequence export
-- [ ] GIF maker (trim + scale + fps + palette)
+- [x] Thumbnail capture
+- [x] Image sequence export
+- [x] GIF maker (trim + scale + fps + palette)
 - [x] Remux with no re-encode, explicit "fast/no quality loss" positioning
 
 ## Power Layer (v1.5+)
@@ -107,6 +107,6 @@ This roadmap now tracks implementation status directly.
 
 ## Next Implementation Targets
 
-1. Add thumbnail capture.
-2. Add image sequence export.
-3. Add GIF maker (trim + scale + fps + palette).
+1. Add advanced options drawer (encoder choice, HW encoders, keyframe/preset, pixel format).
+2. Add guarded custom arguments (extra args input + final command review).
+3. Add output overwrite/auto-increment policies.

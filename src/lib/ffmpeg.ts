@@ -33,6 +33,27 @@ export type FfmpegOperation =
       target_size_mb: number | null;
     }
   | { type: "remux"; input: string; output: string }
+  | { type: "thumbnail"; input: string; output: string; time: string }
+  | {
+      type: "image_sequence";
+      input: string;
+      output_pattern: string;
+      start: string | null;
+      duration: string | null;
+      fps: number | null;
+      scale_width: number | null;
+      format: "png" | "jpg" | "webp";
+    }
+  | {
+      type: "gif_maker";
+      input: string;
+      output: string;
+      start: string | null;
+      duration: string | null;
+      width: number | null;
+      fps: number;
+      use_palette: boolean;
+    }
   | { type: "extract_audio"; input: string; output: string; format: "mp3" | "aac" | "opus" | "wav" }
   | { type: "replace_audio"; input: string; audio_input: string; output: string }
   | { type: "loudness"; input: string; output: string; preset: "broadcast" | "streaming" | "podcast" }

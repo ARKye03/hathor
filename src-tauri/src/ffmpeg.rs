@@ -95,6 +95,29 @@ pub enum FfmpegOperation {
         input: String,
         output: String,
     },
+    Thumbnail {
+        input: String,
+        output: String,
+        time: String,
+    },
+    ImageSequence {
+        input: String,
+        output_pattern: String,
+        start: Option<String>,
+        duration: Option<String>,
+        fps: Option<u32>,
+        scale_width: Option<u32>,
+        format: String, // "png" | "jpg" | "webp"
+    },
+    GifMaker {
+        input: String,
+        output: String,
+        start: Option<String>,
+        duration: Option<String>,
+        width: Option<u32>,
+        fps: u32,
+        use_palette: bool,
+    },
     ExtractAudio {
         input: String,
         output: String,
@@ -162,6 +185,9 @@ impl FfmpegOperation {
             FfmpegOperation::Transform { output, .. } => output,
             FfmpegOperation::Merge { output, .. } => output,
             FfmpegOperation::Remux { output, .. } => output,
+            FfmpegOperation::Thumbnail { output, .. } => output,
+            FfmpegOperation::ImageSequence { output_pattern, .. } => output_pattern,
+            FfmpegOperation::GifMaker { output, .. } => output,
             FfmpegOperation::ExtractAudio { output, .. } => output,
             FfmpegOperation::ReplaceAudio { output, .. } => output,
             FfmpegOperation::Loudness { output, .. } => output,
@@ -612,6 +638,93 @@ pub fn build_args(op: &FfmpegOperation) -> Result<(Vec<String>, Vec<String>), Ff
             ],
             vec![],
         )),
+        FfmpegOperation::Thumbnail {
+            input,
+            output,
+            time,
+        } => Ok((
+            vec![
+                "-y".into(),
+                "-ss".into(),
+                time.clone(),
+                "-i".into(),
+                input.clone(),
+                "-frames:v".into(),
+                "1".into(),
+                output.clone(),
+            ],
+            vec![],
+        )),
+        FfmpegOperation::ImageSequence {
+            input,
+            output_pattern,
+            start,
+            duration,
+            fps,
+            scale_width,
+            format,
+        } => {
+            let mut args = vec!["-y".into(), "-i".into(), input.clone()];
+            if let Some(s) = start.as_ref().filter(|s| !s.trim().is_empty()) {
+                args.extend(["-ss".into(), s.clone()]);
+            }
+            if let Some(d) = duration.as_ref().filter(|d| !d.trim().is_empty()) {
+                args.extend(["-t".into(), d.clone()]);
+            }
+
+            let mut filters = Vec::<String>::new();
+            if let Some(v) = fps {
+                filters.push(format!("fps={}", (*v).max(1)));
+            }
+            if let Some(w) = scale_width {
+                if *w > 0 {
+                    filters.push(format!("scale={}:-1", w));
+                }
+            }
+            if !filters.is_empty() {
+                args.extend(["-vf".into(), filters.join(",")]);
+            }
+
+            match format.as_str() {
+                "jpg" => args.extend(["-c:v".into(), "mjpeg".into(), "-q:v".into(), "2".into()]),
+                "webp" => args.extend(["-c:v".into(), "libwebp".into(), "-q:v".into(), "80".into()]),
+                _ => args.extend(["-c:v".into(), "png".into()]),
+            }
+            args.push(output_pattern.clone());
+            Ok((args, vec![]))
+        }
+        FfmpegOperation::GifMaker {
+            input,
+            output,
+            start,
+            duration,
+            width,
+            fps,
+            use_palette,
+        } => {
+            let mut args = vec!["-y".into()];
+            if let Some(s) = start.as_ref().filter(|s| !s.trim().is_empty()) {
+                args.extend(["-ss".into(), s.clone()]);
+            }
+            args.extend(["-i".into(), input.clone()]);
+            if let Some(d) = duration.as_ref().filter(|d| !d.trim().is_empty()) {
+                args.extend(["-t".into(), d.clone()]);
+            }
+
+            let fps = (*fps).max(1);
+            let width = width.unwrap_or(480).max(80);
+            let base = format!("fps={fps},scale={width}:-1:flags=lanczos");
+            if *use_palette {
+                args.extend([
+                    "-vf".into(),
+                    format!("{base},split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse"),
+                ]);
+            } else {
+                args.extend(["-vf".into(), base]);
+            }
+            args.push(output.clone());
+            Ok((args, vec![]))
+        }
         FfmpegOperation::ExtractAudio {
             input,
             output,
