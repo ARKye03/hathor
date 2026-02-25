@@ -90,23 +90,23 @@ This roadmap now tracks implementation status directly.
 
 ## Quality-of-Life
 
-- [ ] Output rules
+- [x] Output rules
   - [x] Default output folder
   - [x] Naming templates
-  - [ ] Overwrite/auto-increment policies
+  - [x] Overwrite/auto-increment policies
 
-- [ ] Smart warnings
+- [x] Smart warnings
   - [x] Remux possible suggestion
   - [x] "This cut will re-encode" warning
   - [x] Codec/container compatibility warning
 
-- [ ] History
-  - [ ] Recent jobs
-  - [ ] Success/fail tracking
-  - [ ] Reopen settings
+- [x] History
+  - [x] Recent jobs
+  - [x] Success/fail tracking
+  - [x] Reopen settings
 
 ## Next Implementation Targets
 
 1. Add advanced options drawer (encoder choice, HW encoders, keyframe/preset, pixel format).
 2. Add guarded custom arguments (extra args input + final command review).
-3. Add output overwrite/auto-increment policies.
+3. Add profile manager (save/load presets + import/export packs).

@@ -112,6 +112,10 @@ export function expandMediaInputs(paths: string[]): Promise<string[]> {
   return invoke("expand_media_inputs", { paths });
 }
 
+export function resolveOutputPath(path: string, policy: "overwrite" | "auto_increment"): Promise<string> {
+  return invoke("resolve_output_path", { path, policy });
+}
+
 export function onLog(cb: (line: string) => void): Promise<UnlistenFn> {
   return listen<string>("ffmpeg://log", (e) => cb(e.payload));
 }

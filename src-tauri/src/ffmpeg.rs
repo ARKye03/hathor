@@ -1452,3 +1452,43 @@ pub async fn expand_media_inputs(paths: Vec<String>) -> Result<Vec<String>, Stri
     out.dedup();
     Ok(out)
 }
+
+#[tauri::command]
+pub async fn resolve_output_path(path: String, policy: String) -> Result<String, String> {
+    if policy != "auto_increment" {
+        return Ok(path);
+    }
+
+    let base = PathBuf::from(&path);
+    if !base.exists() {
+        return Ok(path);
+    }
+
+    let parent = base.parent().map(|p| p.to_path_buf()).unwrap_or_default();
+    let stem = base
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("output")
+        .to_string();
+    let ext = base
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_string());
+
+    for i in 1..=9999_u32 {
+        let candidate_name = match &ext {
+            Some(ext) if !ext.is_empty() => format!("{stem}_{i:03}.{ext}"),
+            _ => format!("{stem}_{i:03}"),
+        };
+        let candidate = if parent.as_os_str().is_empty() {
+            PathBuf::from(candidate_name)
+        } else {
+            parent.join(candidate_name)
+        };
+        if !candidate.exists() {
+            return Ok(candidate.to_string_lossy().to_string());
+        }
+    }
+
+    Err("failed to resolve unique output filename".into())
+}

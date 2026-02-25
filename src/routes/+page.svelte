@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from "svelte";
   import {
     runFfmpeg, cancelFfmpeg, onLog, onDone, onProgress, onCommand, probeMedia, expandMediaInputs,
-    type FfmpegOperation, type MediaInfo, type FfmpegProgress
+    resolveOutputPath, type FfmpegOperation, type MediaInfo, type FfmpegProgress
   } from "$lib/ffmpeg";
   import type { UnlistenFn } from "@tauri-apps/api/event";
   import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
@@ -22,7 +22,7 @@
   import ListVideo from "@lucide/svelte/icons/list-video";
   import Settings2 from "@lucide/svelte/icons/settings-2";
 
-  import type { Tab, Container, QualityMode, TrimMode, Rotate, Flip, Resolution, Fps, QueueJob, QueueStatus, ModeItem } from "$lib/types";
+  import type { Tab, Container, QualityMode, TrimMode, Rotate, Flip, Resolution, Fps, QueueJob, QueueStatus, ModeItem, OutputCollisionPolicy, JobHistoryEntry } from "$lib/types";
   import ConvertPanel from "$lib/components/panels/ConvertPanel.svelte";
   import TrimPanel from "$lib/components/panels/TrimPanel.svelte";
   import TransformPanel from "$lib/components/panels/TransformPanel.svelte";
@@ -74,6 +74,11 @@
   const DEFAULT_OUTPUT_DIR_KEY = "hathor-default-output-dir";
   const DEFAULT_CLEANUP_KEY = "hathor-cleanup-default";
   const OUTPUT_TEMPLATE_KEY = "hathor-output-name-template";
+  const OUTPUT_COLLISION_POLICY_KEY = "hathor-output-collision-policy";
+  const REOPEN_SETTINGS_KEY = "hathor-reopen-settings";
+  const SETTINGS_OPEN_KEY = "hathor-settings-open";
+  const JOB_HISTORY_KEY = "hathor-job-history";
+  const HISTORY_LIMIT = 100;
 
   // ── Queue ─────────────────────────────────────────────────────────────────────
 
@@ -89,6 +94,9 @@
   let settingsOpen = $state(false);
   let defaultOutputDir = $state("");
   let outputNameTemplate = $state("{name}_out");
+  let outputCollisionPolicy = $state<OutputCollisionPolicy>("overwrite");
+  let reopenSettingsEnabled = $state(false);
+  let jobHistory = $state<JobHistoryEntry[]>([]);
 
   // ── Form state ────────────────────────────────────────────────────────────────
 
@@ -212,6 +220,16 @@
       outputNameTemplate = localStorage.getItem(OUTPUT_TEMPLATE_KEY) ?? "{name}_out";
       const cleanupPref = localStorage.getItem(DEFAULT_CLEANUP_KEY);
       if (cleanupPref != null) cancelCleanupEnabled = cleanupPref === "1";
+      const collisionPolicy = localStorage.getItem(OUTPUT_COLLISION_POLICY_KEY);
+      if (collisionPolicy === "overwrite" || collisionPolicy === "auto_increment") outputCollisionPolicy = collisionPolicy;
+      const reopenPref = localStorage.getItem(REOPEN_SETTINGS_KEY);
+      reopenSettingsEnabled = reopenPref === "1";
+      if (reopenSettingsEnabled) settingsOpen = localStorage.getItem(SETTINGS_OPEN_KEY) === "1";
+      const rawHistory = localStorage.getItem(JOB_HISTORY_KEY);
+      if (rawHistory) {
+        const parsed = JSON.parse(rawHistory) as JobHistoryEntry[];
+        if (Array.isArray(parsed)) jobHistory = parsed.slice(0, HISTORY_LIMIT);
+      }
     } catch {}
 
     unlistenLog = await onLog((line) => {
@@ -259,6 +277,10 @@
       localStorage.setItem(DEFAULT_OUTPUT_DIR_KEY, defaultOutputDir);
       localStorage.setItem(DEFAULT_CLEANUP_KEY, cancelCleanupEnabled ? "1" : "0");
       localStorage.setItem(OUTPUT_TEMPLATE_KEY, outputNameTemplate);
+      localStorage.setItem(OUTPUT_COLLISION_POLICY_KEY, outputCollisionPolicy);
+      localStorage.setItem(REOPEN_SETTINGS_KEY, reopenSettingsEnabled ? "1" : "0");
+      localStorage.setItem(SETTINGS_OPEN_KEY, settingsOpen ? "1" : "0");
+      localStorage.setItem(JOB_HISTORY_KEY, JSON.stringify(jobHistory.slice(0, HISTORY_LIMIT)));
     } catch {}
   });
 
@@ -657,15 +679,79 @@
 
   // ── Queue operations ──────────────────────────────────────────────────────────
 
+  function operationInputLabel(operation: FfmpegOperation): string {
+    if (operation.type === "merge") return operation.inputs.join(", ");
+    if (operation.type === "replace_audio") return `${operation.input} + ${operation.audio_input}`;
+    if (operation.type === "burn_subtitles") return `${operation.input} + ${operation.subtitle_input}`;
+    if (operation.type === "manage_tracks") return operation.input;
+    return (operation as { input: string }).input;
+  }
+
+  function operationOutputLabel(operation: FfmpegOperation): string {
+    if (operation.type === "image_sequence") return operation.output_pattern;
+    return "output" in operation ? operation.output : "";
+  }
+
+  function appendJobHistory(job: QueueJob) {
+    if (job.status !== "done" && job.status !== "error" && job.status !== "cancelled") return;
+    const entry: JobHistoryEntry = {
+      id: crypto.randomUUID(),
+      at: new Date().toISOString(),
+      mode: job.operation.type,
+      input: operationInputLabel(job.operation),
+      output: operationOutputLabel(job.operation),
+      status: job.status,
+    };
+    jobHistory = [entry, ...jobHistory].slice(0, HISTORY_LIMIT);
+  }
+
+  function queuedOutputs(): Set<string> {
+    const out = new Set<string>();
+    for (const job of queue) {
+      if ("output" in job.operation && job.operation.output) out.add(job.operation.output);
+    }
+    return out;
+  }
+
+  function incrementPathSuffix(path: string, i: number): string {
+    const { dir, base, ext } = splitPath(path);
+    const name = `${base}_${String(i).padStart(3, "0")}`;
+    return joinPath(dir, ext ? `${name}.${ext}` : name);
+  }
+
+  function avoidQueuedOutputCollision(path: string): string {
+    const used = queuedOutputs();
+    if (!used.has(path)) return path;
+    for (let i = 1; i <= 9999; i += 1) {
+      const candidate = incrementPathSuffix(path, i);
+      if (!used.has(candidate)) return candidate;
+    }
+    return path;
+  }
+
+  async function applyOutputPolicy(operation: FfmpegOperation): Promise<FfmpegOperation> {
+    if (outputCollisionPolicy !== "auto_increment") return operation;
+    if (operation.type === "image_sequence") return operation;
+    if (!("output" in operation)) return operation;
+    let nextOutput = operation.output;
+    try {
+      nextOutput = await resolveOutputPath(nextOutput, outputCollisionPolicy);
+    } catch {}
+    nextOutput = avoidQueuedOutputCollision(nextOutput);
+    if (nextOutput === operation.output) return operation;
+    return { ...operation, output: nextOutput } as FfmpegOperation;
+  }
+
   function createQueueJob(operation: FfmpegOperation, durationSecs = 0): QueueJob {
     return { id: crypto.randomUUID(), operation, status: "pending", logs: [], progress: null, durationSecs, command: "", cleanupPartial: cancelCleanupEnabled };
   }
 
-  function addToQueue() {
+  async function addToQueue() {
     if (activeTab === "merge" && mergeInputs.length > 1 && mergeConcatMismatchWarning) return;
     if (activeTab === "replace_audio" && !replaceAudioTrackInput) return;
     if (activeTab === "burn_subtitles" && !burnSubtitlesFile) return;
-    const job = createQueueJob(buildOperation(), mediaInfo?.duration_secs ?? 0);
+    const operation = await applyOutputPolicy(buildOperation());
+    const job = createQueueJob(operation, mediaInfo?.duration_secs ?? 0);
     queue.push(job);
     if (!selectedJobId) selectedJobId = job.id;
   }
@@ -685,6 +771,7 @@
       job.logs.push(`[error] ${e}`);
       if (job.status === "running") job.status = "error";
     }
+    appendJobHistory(job);
     runningJobId = "";
     currentProgress = null;
   }
@@ -726,6 +813,10 @@
     if (queueRunning) return;
     queue.splice(0, queue.length);
     selectedJobId = null;
+  }
+
+  function clearJobHistory() {
+    jobHistory = [];
   }
 
   function moveJob(id: string, dir: -1 | 1) {
@@ -881,7 +972,10 @@
         await refreshMergeInfos();
         return;
       }
-      for (const path of mediaPaths) queue.push(createQueueJob(buildOperation(path, true)));
+      for (const path of mediaPaths) {
+        const operation = await applyOutputPolicy(buildOperation(path, true));
+        queue.push(createQueueJob(operation));
+      }
       if (!selectedJobId) selectedJobId = queue[0]?.id ?? null;
     } catch {}
   }
@@ -939,6 +1033,8 @@
     queue.every(j => j.status === "done") ? "done" :
     "idle"
   );
+  const historySuccessCount = $derived(jobHistory.filter((h) => h.status === "done").length);
+  const historyFailureCount = $derived(jobHistory.filter((h) => h.status === "error" || h.status === "cancelled").length);
 
   const encodeDuration = $derived(queue.find(j => j.status === "running")?.durationSecs ?? 0);
   const progressPct = $derived(
@@ -1036,7 +1132,13 @@
             bind:defaultOutputDir
             bind:outputNameTemplate
             bind:cancelCleanupEnabled
+            bind:outputCollisionPolicy
+            bind:reopenSettingsEnabled
+            history={jobHistory}
+            {historySuccessCount}
+            {historyFailureCount}
             onpickdir={pickDefaultOutputDir}
+            onclearhistory={clearJobHistory}
           />
         {:else if activeTab === "convert"}
           <ConvertPanel

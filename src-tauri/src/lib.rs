@@ -10,7 +10,8 @@ pub fn run() {
             ffmpeg::run_ffmpeg,
             ffmpeg::cancel_ffmpeg,
             ffmpeg::probe_media,
-            ffmpeg::expand_media_inputs
+            ffmpeg::expand_media_inputs,
+            ffmpeg::resolve_output_path
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

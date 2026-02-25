@@ -26,6 +26,16 @@ export type Flip = "none" | "horizontal" | "vertical" | "both";
 export type Resolution = "keep" | "1080p" | "720p" | "480p";
 export type Fps = "keep" | "24" | "30" | "60";
 export type QueueStatus = "idle" | "running" | "paused" | "done" | "error";
+export type OutputCollisionPolicy = "overwrite" | "auto_increment";
+
+export interface JobHistoryEntry {
+  id: string;
+  at: string;
+  mode: string;
+  input: string;
+  output: string;
+  status: "done" | "error" | "cancelled";
+}
 
 export interface ModeItem {
   tab: Tab;
